@@ -6,16 +6,16 @@ insurance policy files digitally — replacing manual, paper-based systems.
 ## 🖥️ Live Preview
 
 ### Dashboard & Document Intelligence
-![Dashboard](PT_1.png)
+![Dashboard](PT1.png)
 
 ### All Policies View
-![All Policies](PT_2.png)
+![All Policies](PT2.png)
 
 ### Edit Client & Policy
 ![Edit View](PT3.png)
 
 ### Search Functionality
-![Search](PT_4.png)
+![Search](PT4.png)
 
 ## 💡 Problem It Solves
 Managing insurance policy files manually is slow and error-prone. 
