@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Edit Record - MOT Policy Tracker</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
+        }
+
+        body {
+            background-color: #f0f2f5;
+        }
+
+        .navbar {
+            background-color: #003366;
+            padding: 15px 30px;
+            color: white;
+            font-size: 20px;
+            font-weight: bold;
+        }
+
+        .container {
+            max-width: 700px;
+            margin: 30px auto;
+            padding: 0 20px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 25px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        h2 {
+            color: #003366;
+            margin-bottom: 20px;
+            font-size: 18px;
+        }
+
+        label {
+            font-size: 13px;
+            color: #555;
+            display: block;
+            margin-bottom: 4px;
+            font-weight: bold;
+        }
+
+        input, select {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 14px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .btn-save {
+            background-color: #003366;
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: bold;
+            width: 100%;
+            margin-top: 5px;
+        }
+
+        .btn-cancel {
+            display: block;
+            text-align: center;
+            margin-top: 12px;
+            color: #888;
+            text-decoration: none;
+            font-size: 14px;
+        }
+
+        .btn-cancel:hover {
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="navbar">🗂 MOT POLICY TRACKER</div>
+
+    <div class="container">
+        <div class="card">
+            <h2>✏️ Edit Client & Policy</h2>
+            <form method="POST">
+                <input type="hidden" name="client_id" value="{{ record[0] }}">
+
+                <div class="row">
+                    <div>
+                        <label>Client Full Name</label>
+                        <input type="text" name="full_name" value="{{ record[1] }}" required>
+                    </div>
+                    <div>
+                        <label>Phone Number</label>
+                        <input type="text" name="phone" value="{{ record[2] }}" required>
+                    </div>
+                </div>
+
+                <label>Email Address</label>
+                <input type="email" name="email" value="{{ record[3] }}">
+
+                <div class="row">
+                    <div>
+                        <label>Policy Number</label>
+                        <input type="text" name="policy_number" value="{{ record[5] }}" required>
+                    </div>
+                    <div>
+                        <label>Policy Type</label>
+                        <input type="text" name="policy_type" value="{{ record[6] }}" required>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div>
+                        <label>Start Date</label>
+                        <input type="date" name="start_date" value="{{ record[7] }}" required>
+                    </div>
+                    <div>
+                        <label>End Date</label>
+                        <input type="date" name="end_date" value="{{ record[8] }}" required>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div>
+                        <label>Status</label>
+                        <select name="status">
+                            <option value="Active" {% if record[9] == 'Active' %}selected{% endif %}>Active</option>
+                            <option value="Expired" {% if record[9] == 'Expired' %}selected{% endif %}>Expired</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>Shelf Location</label>
+                        <input type="text" name="shelf_location" value="{{ record[10] }}" required>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn-save">💾 Save Changes</button>
+            </form>
+            <a href="/" class="btn-cancel">← Cancel and go back</a>
+        </div>
+    </div>
+
+</body>
+</html>
