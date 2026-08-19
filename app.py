@@ -8,10 +8,12 @@ import json
 import os
 
 app = Flask(__name__)
-DB_PATH = r"C:\Users\evans\OneDrive\Desktop\POLICY TRACKER\policy_tracker.db"
+DB_PATH = "policy_tracker.db"  # Local database in project folder
 
 # ─── Gemini Setup ─────────────────────────────────────────────────────────────
-client = genai.Client(api_key="API KEY")
+# IMPORTANT: Replace with your actual API key from https://aistudio.google.com/apikey
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "YOUR_API_KEY_HERE")
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 # ─── Database Setup ───────────────────────────────────────────────────────────
 
@@ -245,9 +247,12 @@ def get_risk_flags():
 
 def extract_policy_from_pdf(pdf_bytes):
     text = ""
-    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-        for page in pdf.pages:
-            text += page.extract_text() or ""
+    try:
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            for page in pdf.pages:
+                text += page.extract_text() or ""
+    except Exception as e:
+        return None, f"Error reading PDF: {str(e)}"
 
     if not text.strip():
         return None, "Could not extract text from PDF"
@@ -268,16 +273,22 @@ Return ONLY the JSON object, no explanation, no markdown, no backticks.
 Document text:
 {text[:3000]}"""
 
-    response = client.models.generate_content(
-        model="gemini-1.5-flash",
-        contents=prompt
-    )
-    raw = response.text.strip()
     try:
-        data = json.loads(raw)
-        return data, None
-    except json.JSONDecodeError:
-        return None, "AI could not parse the document. Please fill in manually."
+        if GEMINI_API_KEY == "YOUR_API_KEY_HERE":
+            return None, "❌ Gemini API key not configured. Please set your API key in the environment or code."
+        
+        response = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=prompt
+        )
+        raw = response.text.strip()
+        try:
+            data = json.loads(raw)
+            return data, None
+        except json.JSONDecodeError:
+            return None, "AI could not parse the document. Please fill in manually."
+    except Exception as e:
+        return None, f"API Error: {str(e)}. Check your API key is valid."
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
 
