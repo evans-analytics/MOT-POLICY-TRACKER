@@ -249,7 +249,7 @@
 
     <!-- ── Add Policy ── -->
     <div class="card">
-        <h2> Add New Client & Policy</h2>
+        <h2> Add a New Client & Policy</h2>
         <form method="POST">
             <div class="row">
                 <input type="text" id="f_full_name" name="full_name" placeholder="Client Full Name" required>
@@ -277,7 +277,7 @@
 
     <!-- ── All Policies ── -->
     <div class="card">
-        <h2>📋 All Policies ({{ all_policies|length }} total)</h2>
+        <h2> All Policies ({{ all_policies|length }} total)</h2>
         {% if all_policies %}
         <table>
             <thead>
@@ -318,7 +318,7 @@
     document.getElementById('pdf_input').addEventListener('change', function() {
         const area = document.querySelector('.upload-area');
         if (this.files.length > 0) {
-            area.textContent = '📄 ' + this.files[0].name;
+            area.textContent = ' ' + this.files[0].name;
         }
     });
 
@@ -326,17 +326,16 @@
         const fileInput = document.getElementById('pdf_input');
         const status = document.getElementById('extract-status');
         if (!fileInput.files.length) {
-            status.textContent = '⚠️ Please select a PDF file first.';
+            status.textContent = ' Please select a PDF file first.';
             return;
-        }
-        status.textContent = '⏳ Extracting with AI... please wait.';
+        } Extracting with AI... please wait.';
         const formData = new FormData();
         formData.append('pdf_file', fileInput.files[0]);
         try {
             const response = await fetch('/upload-pdf', { method: 'POST', body: formData });
             const data = await response.json();
             if (data.error) {
-                status.textContent = '❌ ' + data.error;
+                status.textContent = ' ' + data.error;
                 return;
             }
             document.getElementById('f_full_name').value      = data.full_name || '';
@@ -348,10 +347,10 @@
             document.getElementById('f_end_date').value       = data.end_date || '';
             document.getElementById('f_shelf_location').value = data.shelf_location || '';
             if (data.status) document.getElementById('f_status').value = data.status;
-            status.textContent = '✅ Details extracted! Review the form below and click Add Policy.';
+            status.textContent = ' Details extracted! Review the form below and click Add Policy.';
             document.getElementById('f_full_name').scrollIntoView({ behavior: 'smooth', block: 'center' });
         } catch (err) {
-            status.textContent = '❌ Something went wrong. Please try again.';
+            status.textContent = ' Something went wrong. Please try again.';
         }
     }
 </script>
