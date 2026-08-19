@@ -39,7 +39,7 @@ def init_db():
         )
     """)
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS file_log (
+        CREATE TABLE IF EXISTS file_log (
             log_id INTEGER PRIMARY KEY AUTOINCREMENT,
             policy_id INTEGER,
             shelf_location TEXT,
