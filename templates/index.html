@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>INSURANCE FILE POLICY TRACKER</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: Arial, sans-serif; }
+        body { background-color: #f0f2f5; }
+
+        .navbar {
+            background-color: #003366;
+            padding: 15px 30px;
+            color: white;
+            font-size: 20px;
+            font-weight: bold;
+        }
+
+        .container { max-width: 960px; margin: 30px auto; padding: 0 20px; }
+
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 25px;
+            margin-bottom: 25px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        h2 { color: #003366; margin-bottom: 20px; font-size: 18px; }
+
+        input, select {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 12px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .row { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+
+        button {
+            padding: 10px 25px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        .btn-search { background-color: #003366; color: white; }
+        .btn-add { background-color: #28a745; color: white; width: 100%; padding: 12px; font-size: 16px; }
+
+        .message {
+            padding: 12px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            background-color: #d4edda;
+            color: #155724;
+            font-weight: bold;
+        }
+
+        .search-bar { display: flex; gap: 10px; }
+        .search-bar input { margin-bottom: 0; }
+
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        th { background-color: #003366; color: white; padding: 12px; text-align: left; font-size: 13px; }
+        td { padding: 12px; border-bottom: 1px solid #eee; font-size: 13px; }
+        tr:hover { background-color: #f5f5f5; }
+
+        .badge { padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; }
+        .badge-active { background-color: #d4edda; color: #155724; }
+        .badge-expired { background-color: #f8d7da; color: #721c24; }
+
+        .btn-edit {
+            background-color: #ffc107;
+            color: #333;
+            padding: 6px 12px;
+            font-size: 12px;
+            border-radius: 4px;
+            text-decoration: none;
+            display: inline-block;
+            font-weight: bold;
+        }
+
+        .btn-delete {
+            background-color: #dc3545;
+            color: white;
+            padding: 6px 12px;
+            font-size: 12px;
+            border-radius: 4px;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .action-cell { display: flex; gap: 6px; align-items: center; }
+
+        /* ── Risk Flags ── */
+        .flag { display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; border-radius: 6px; margin-bottom: 10px; font-size: 14px; }
+        .flag-warning { background-color: #fff3cd; color: #856404; border-left: 4px solid #ffc107; }
+        .flag-danger  { background-color: #f8d7da; color: #721c24; border-left: 4px solid #dc3545; }
+        .flag-info    { background-color: #d1ecf1; color: #0c5460; border-left: 4px solid #17a2b8; }
+        .flag-link { margin-left: auto; font-size: 12px; color: inherit; text-decoration: underline; white-space: nowrap; }
+        .no-flags { color: #28a745; font-weight: bold; font-size: 14px; }
+
+        /* ── PDF Upload ── */
+        .upload-area {
+            border: 2px dashed #003366;
+            border-radius: 8px;
+            padding: 30px;
+            text-align: center;
+            cursor: pointer;
+            color: #003366;
+            font-size: 15px;
+            margin-bottom: 15px;
+            transition: background 0.2s;
+        }
+        .upload-area:hover { background-color: #f0f4ff; }
+        .upload-area input[type="file"] { display: none; }
+
+        .btn-extract {
+            background-color: #6f42c1;
+            color: white;
+            width: 100%;
+            padding: 12px;
+            font-size: 15px;
+            border-radius: 5px;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .extract-status { margin-top: 12px; font-size: 13px; color: #555; text-align: center; min-height: 20px; }
+
+        .upload-area {
+            border: 2px dashed #003366;
+            border-radius: 8px;
+            padding: 30px;
+            text-align: center;
+            cursor: pointer;
+            color: #003366;
+            font-size: 15px;
+            margin-bottom: 15px;
+            transition: background 0.2s;
+        }
+        .upload-area:hover { background-color: #f0f4ff; }
+        .upload-area input[type="file"] { display: none; }
+        .btn-extract {
+            background-color: #6f42c1;
+            color: white;
+            width: 100%;
+            padding: 12px;
+            font-size: 15px;
+            border-radius: 5px;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .extract-status { margin-top: 12px; font-size: 13px; color: #555; text-align: center; min-height: 20px; }
+
+        footer { text-align: center; padding: 20px; color: #888; font-size: 13px; }
+    </style>
+</head>
+<body>
+
+<div class="navbar">🗂 INSURANCE POLICY TRACKER</div>
+
+<div class="container">
+
+    {% if message %}
+    <div class="message">{{ message }}</div>
+    {% endif %}
+
+    <!-- ── Step 1: Risk Dashboard ── -->
+    <div class="card">
+        <h2>🚨 Risk Dashboard
+            <span style="font-size:13px; font-weight:normal; color:#888; margin-left:10px;">
+                {{ risk_flags|length }} alert(s)
+            </span>
+        </h2>
+        {% if risk_flags %}
+            {% for flag in risk_flags %}
+            <div class="flag flag-{{ flag.level }}">
+                <span>{{ flag.icon }}</span>
+                <span>{{ flag.message }}</span>
+                {% if flag.policy_id %}
+                <a class="flag-link" href="/edit/{{ flag.policy_id }}">Fix →</a>
+                {% endif %}
+            </div>
+            {% endfor %}
+        {% else %}
+            <p class="no-flags">✅ No risks detected. All policies look good!</p>
+        {% endif %}
+    </div>
+
+    <!-- ── Document Intelligence ── -->
+    <div class="card">
+        <h2>🤖 Document Intelligence — Upload a Policy PDF</h2>
+        <p style="font-size:13px; color:#666; margin-bottom:15px;">
+            Upload a policy document and AI will automatically extract the client and policy details for you.
+        </p>
+        <div class="upload-area" onclick="document.getElementById('pdf_input').click()">
+            📄 Click to upload a PDF policy document
+            <input type="file" id="pdf_input" accept=".pdf">
+        </div>
+        <button class="btn-extract" onclick="extractFromPDF()">⚡ Extract with AI</button>
+        <div class="extract-status" id="extract-status"></div>
+    </div>
+
+    <!-- ── Search ── -->
+    <div class="card">
+        <h2>🔍 Search for a File</h2>
+        <form method="POST">
+            <div class="search-bar">
+                <input type="text" name="search_query" placeholder="Enter client name..." value="{{ search_query }}">
+                <button type="submit" name="search" class="btn-search">Search</button>
+            </div>
+        </form>
+        {% if results %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Client Name</th><th>Phone</th><th>Policy No.</th>
+                    <th>Type</th><th>Status</th><th>Shelf Location</th><th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in results %}
+                <tr>
+                    <td>{{ row[0] }}</td><td>{{ row[1] }}</td><td>{{ row[2] }}</td>
+                    <td>{{ row[3] }}</td>
+                    <td><span class="badge {% if row[4] == 'Active' %}badge-active{% else %}badge-expired{% endif %}">{{ row[4] }}</span></td>
+                    <td>{{ row[5] }}</td>
+                    <td>
+                        <div class="action-cell">
+                            <a href="/edit/{{ row[7] }}" class="btn-edit">✏️ Edit</a>
+                            <form method="POST" action="/delete/{{ row[7] }}" onsubmit="return confirm('Are you sure?')">
+                                <button type="submit" class="btn-delete">🗑️ Delete</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    </div>
+
+    <!-- ── Add Policy ── -->
+    <div class="card">
+        <h2> Add a New Client & Policy</h2>
+        <form method="POST">
+            <div class="row">
+                <input type="text" id="f_full_name" name="full_name" placeholder="Client Full Name" required>
+                <input type="text" id="f_phone" name="phone" placeholder="Phone Number" required>
+            </div>
+            <input type="email" id="f_email" name="email" placeholder="Email Address">
+            <div class="row">
+                <input type="text" id="f_policy_number" name="policy_number" placeholder="Policy Number (e.g. POL-004)" required>
+                <input type="text" id="f_policy_type" name="policy_type" placeholder="Policy Type (e.g. Motor, Life, Fire)" required>
+            </div>
+            <div class="row">
+                <input type="date" id="f_start_date" name="start_date" required>
+                <input type="date" id="f_end_date" name="end_date" required>
+            </div>
+            <div class="row">
+                <select id="f_status" name="status">
+                    <option value="Active">Active</option>
+                    <option value="Expired">Expired</option>
+                </select>
+                <input type="text" id="f_shelf_location" name="shelf_location" placeholder="Shelf Location (e.g. Shelf A - Row 2)" required>
+            </div>
+            <button type="submit" name="add" class="btn-add">Add Policy</button>
+        </form>
+    </div>
+
+    <!-- ── All Policies ── -->
+    <div class="card">
+        <h2> All Policies ({{ all_policies|length }} total)</h2>
+        {% if all_policies %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Client Name</th><th>Phone</th><th>Policy No.</th>
+                    <th>Type</th><th>Status</th><th>Shelf Location</th><th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in all_policies %}
+                <tr>
+                    <td>{{ row[0] }}</td><td>{{ row[1] }}</td><td>{{ row[2] }}</td>
+                    <td>{{ row[3] }}</td>
+                    <td><span class="badge {% if row[4] == 'Active' %}badge-active{% else %}badge-expired{% endif %}">{{ row[4] }}</span></td>
+                    <td>{{ row[5] }}</td>
+                    <td>
+                        <div class="action-cell">
+                            <a href="/edit/{{ row[7] }}" class="btn-edit">✏️ Edit</a>
+                            <form method="POST" action="/delete/{{ row[7] }}" onsubmit="return confirm('Are you sure?')">
+                                <button type="submit" class="btn-delete">🗑️ Delete</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p style="color:#888; font-size:14px;">No policies added yet.</p>
+        {% endif %}
+    </div>
+
+</div>
+
+<footer>&copy; 2026 Evans Boateng. All rights reserved.</footer>
+
+<script>
+    document.getElementById('pdf_input').addEventListener('change', function() {
+        const area = document.querySelector('.upload-area');
+        if (this.files.length > 0) {
+            area.textContent = ' ' + this.files[0].name;
+        }
+    });
+
+    async function extractFromPDF() {
+        const fileInput = document.getElementById('pdf_input');
+        const status = document.getElementById('extract-status');
+        if (!fileInput.files.length) {
+            status.textContent = 'Please select a PDF file first.';
+            return;
+        }
+        status.textContent = 'Extracting with AI... please wait.';
+        const formData = new FormData();
+        formData.append('pdf_file', fileInput.files[0]);
+        try {
+            const response = await fetch('/upload-pdf', { method: 'POST', body: formData });
+            const data = await response.json();
+            if (data.error) {
+                status.textContent = ' ' + data.error;
+                return;
+            }
+            document.getElementById('f_full_name').value      = data.full_name || '';
+            document.getElementById('f_phone').value          = data.phone || '';
+            document.getElementById('f_email').value          = data.email || '';
+            document.getElementById('f_policy_number').value  = data.policy_number || '';
+            document.getElementById('f_policy_type').value    = data.policy_type || '';
+            document.getElementById('f_start_date').value     = data.start_date || '';
+            document.getElementById('f_end_date').value       = data.end_date || '';
+            document.getElementById('f_shelf_location').value = data.shelf_location || '';
+            if (data.status) document.getElementById('f_status').value = data.status;
+            status.textContent = ' Details extracted! Review the form below and click Add Policy.';
+            document.getElementById('f_full_name').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } catch (err) {
+            status.textContent = ' Something went wrong. Please try again.';
+        }
+    }
+</script>
+
+</body>
+</html>

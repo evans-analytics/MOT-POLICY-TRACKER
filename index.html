@@ -326,9 +326,10 @@
         const fileInput = document.getElementById('pdf_input');
         const status = document.getElementById('extract-status');
         if (!fileInput.files.length) {
-            status.textContent = ' Please select a PDF file first.';
+            status.textContent = 'Please select a PDF file first.';
             return;
-        } Extracting with AI... please wait.';
+        }
+        status.textContent = 'Extracting with AI... please wait.';
         const formData = new FormData();
         formData.append('pdf_file', fileInput.files[0]);
         try {
