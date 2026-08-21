@@ -167,6 +167,13 @@ def delete_record(policy_id):
     conn.commit()
     conn.close()
 
+def mark_policy_expired(policy_id):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE policies SET status='Expired' WHERE policy_id=?", (policy_id,))
+    conn.commit()
+    conn.close()
+
 # ─── Step 1: Risk Flagging ────────────────────────────────────────────────────
 
 def get_risk_flags():
@@ -366,6 +373,11 @@ def edit(policy_id):
 @app.route("/delete/<int:policy_id>", methods=["POST"])
 def delete(policy_id):
     delete_record(policy_id)
+    return redirect(url_for("index"))
+
+@app.route("/mark-expired/<int:policy_id>", methods=["POST"])
+def mark_expired(policy_id):
+    mark_policy_expired(policy_id)
     return redirect(url_for("index"))
 
 if __name__ == "__main__":
