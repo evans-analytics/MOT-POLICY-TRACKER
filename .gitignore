@@ -1,0 +1,15 @@
+# Secrets and local configuration
+.env
+
+# Runtime data
+policy_tracker.db
+policy_documents/*
+!policy_documents/.gitkeep
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local editor files
+.vscode/*.log

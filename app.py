@@ -1,29 +1,47 @@
 from flask import Flask, render_template, request, redirect, url_for, jsonify, send_file
 import sqlite3
 from datetime import datetime, timedelta
-from google import genai
-import pdfplumber
 import io
-import json
 import os
 import csv
 import shutil
+import re
 from werkzeug.utils import secure_filename
+from services.ai_extraction import extract_policy_from_pdf
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 app = Flask(__name__)
-DB_PATH = "policy_tracker.db"  # Local database in project folder
-UPLOAD_FOLDER = "policy_documents"
+DB_PATH = os.getenv("POLICY_DB_PATH", "policy_tracker.db")
+UPLOAD_FOLDER = os.getenv("POLICY_UPLOAD_FOLDER", "policy_documents")
+MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "10"))
+ALLOWED_DOCUMENT_EXTENSIONS = {"pdf", "jpg", "jpeg", "png"}
+app.config.update(
+    SECRET_KEY=os.getenv("FLASK_SECRET_KEY", "development-only-change-me"),
+    MAX_CONTENT_LENGTH=MAX_UPLOAD_MB * 1024 * 1024,
+)
 
-# ─── Gemini Setup ─────────────────────────────────────────────────────────────
-# IMPORTANT: Replace with your actual API key from https://aistudio.google.com/apikey
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "YOUR_API_KEY_HERE")
-client = genai.Client(api_key=GEMINI_API_KEY)
+@app.errorhandler(413)
+def request_entity_too_large(error):
+    return jsonify({"error": f"File too large. Maximum size is {MAX_UPLOAD_MB} MB."}), 413
+
+def allowed_file(filename, extensions=ALLOWED_DOCUMENT_EXTENSIONS):
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in extensions
+
+def connect_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
 
 # ─── Database Setup ───────────────────────────────────────────────────────────
 
 def init_db():
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    conn = connect_db()
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS clients (
@@ -98,13 +116,20 @@ def init_db():
             FOREIGN KEY (policy_id) REFERENCES policies(policy_id)
         )
     """)
+    policy_columns = {row[1] for row in cursor.execute("PRAGMA table_info(policies)")}
+    if "deleted_at" not in policy_columns:
+        try:
+            cursor.execute("ALTER TABLE policies ADD COLUMN deleted_at TEXT")
+        except sqlite3.OperationalError as error:
+            if "duplicate column name" not in str(error).lower():
+                raise
     conn.commit()
     conn.close()
 
 # ─── Core Functions ───────────────────────────────────────────────────────────
 
 def log_audit(policy_id, action, details=""):
-    conn = sqlite3.connect(DB_PATH)
+    conn = connect_db()
     conn.execute(
         "INSERT INTO audit_log (policy_id, action, details, created_at) VALUES (?, ?, ?, ?)",
         (policy_id, action, details, datetime.now().isoformat(timespec="seconds"))
@@ -112,8 +137,43 @@ def log_audit(policy_id, action, details=""):
     conn.commit()
     conn.close()
 
+def validate_policy_data(full_name, phone, email, policy_number, policy_type,
+                         start_date, end_date, status, policy_id=None):
+    required_values = {
+        "full name": full_name,
+        "phone": phone,
+        "policy number": policy_number,
+        "policy type": policy_type,
+        "start date": start_date,
+        "end date": end_date,
+    }
+    missing = [label for label, value in required_values.items() if not str(value or "").strip()]
+    if missing:
+        raise ValueError(f"Missing required field(s): {', '.join(missing)}")
+
+    try:
+        start = datetime.strptime(start_date, "%Y-%m-%d").date()
+        end = datetime.strptime(end_date, "%Y-%m-%d").date()
+    except (TypeError, ValueError) as error:
+        raise ValueError("Dates must use the YYYY-MM-DD format.") from error
+    if end < start:
+        raise ValueError("End date cannot be earlier than the start date.")
+    if status not in {"Active", "Expired"}:
+        raise ValueError("Status must be Active or Expired.")
+    if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        raise ValueError("Enter a valid email address.")
+
+    conn = connect_db()
+    duplicate = conn.execute(
+        "SELECT policy_id FROM policies WHERE policy_number=? AND deleted_at IS NULL AND policy_id IS NOT ?",
+        (policy_number.strip(), policy_id)
+    ).fetchone()
+    conn.close()
+    if duplicate:
+        raise ValueError(f"Policy number '{policy_number}' already exists.")
+
 def search_by_client_name(name):
-    conn = sqlite3.connect(DB_PATH)
+    conn = connect_db()
     cursor = conn.cursor()
     cursor.execute("""
         SELECT 
@@ -128,14 +188,16 @@ def search_by_client_name(name):
         FROM policies
         JOIN clients ON policies.client_id = clients.client_id
         JOIN file_log ON policies.policy_id = file_log.policy_id
-        WHERE clients.full_name LIKE ?
+        WHERE policies.deleted_at IS NULL AND clients.full_name LIKE ?
     """, (f"%{name}%",))
     results = cursor.fetchall()
     conn.close()
     return results
 
 def add_client_and_policy(full_name, phone, email, policy_number, policy_type, start_date, end_date, status, shelf_location):
-    conn = sqlite3.connect(DB_PATH)
+    validate_policy_data(full_name, phone, email, policy_number, policy_type,
+                         start_date, end_date, status)
+    conn = connect_db()
     cursor = conn.cursor()
     cursor.execute("INSERT INTO clients (full_name, phone, email) VALUES (?, ?, ?)",
                    (full_name, phone, email))
@@ -156,9 +218,9 @@ def add_client_and_policy(full_name, phone, email, policy_number, policy_type, s
     return policy_id
 
 def get_all_policies(search_query="", status="", policy_type="", expiry_window=""):
-    conn = sqlite3.connect(DB_PATH)
+    conn = connect_db()
     cursor = conn.cursor()
-    conditions = []
+    conditions = ["policies.deleted_at IS NULL"]
     parameters = []
     if search_query:
         conditions.append("(clients.full_name LIKE ? OR clients.phone LIKE ? OR policies.policy_number LIKE ?)")
@@ -193,14 +255,14 @@ def get_all_policies(search_query="", status="", policy_type="", expiry_window="
     return results
 
 def get_dashboard_stats():
-    conn = sqlite3.connect(DB_PATH)
+    conn = connect_db()
     cursor = conn.cursor()
     stats = {
-        "total": cursor.execute("SELECT COUNT(*) FROM policies").fetchone()[0],
-        "active": cursor.execute("SELECT COUNT(*) FROM policies WHERE status='Active'").fetchone()[0],
-        "expired": cursor.execute("SELECT COUNT(*) FROM policies WHERE status='Expired'").fetchone()[0],
+        "total": cursor.execute("SELECT COUNT(*) FROM policies WHERE deleted_at IS NULL").fetchone()[0],
+        "active": cursor.execute("SELECT COUNT(*) FROM policies WHERE deleted_at IS NULL AND status='Active'").fetchone()[0],
+        "expired": cursor.execute("SELECT COUNT(*) FROM policies WHERE deleted_at IS NULL AND status='Expired'").fetchone()[0],
         "expiring_soon": cursor.execute(
-            "SELECT COUNT(*) FROM policies WHERE status='Active' AND end_date BETWEEN ? AND ?",
+            "SELECT COUNT(*) FROM policies WHERE deleted_at IS NULL AND status='Active' AND end_date BETWEEN ? AND ?",
             (str(datetime.today().date()), str(datetime.today().date() + timedelta(days=30)))
         ).fetchone()[0]
     }
@@ -208,7 +270,7 @@ def get_dashboard_stats():
     return stats
 
 def get_renewal_history(policy_id):
-    conn = sqlite3.connect(DB_PATH)
+    conn = connect_db()
     rows = conn.execute(
         "SELECT previous_start_date, previous_end_date, new_start_date, new_end_date, renewed_at "
         "FROM renewal_history WHERE policy_id=? ORDER BY renewed_at DESC", (policy_id,)
@@ -217,7 +279,7 @@ def get_renewal_history(policy_id):
     return rows
 
 def get_policy_documents(policy_id):
-    conn = sqlite3.connect(DB_PATH)
+    conn = connect_db()
     rows = conn.execute(
         "SELECT document_id, filename, uploaded_at FROM policy_documents WHERE policy_id=? ORDER BY uploaded_at DESC",
         (policy_id,)
@@ -226,12 +288,12 @@ def get_policy_documents(policy_id):
     return rows
 
 def get_due_reminders():
-    conn = sqlite3.connect(DB_PATH)
+    conn = connect_db()
     today = datetime.today().date()
     rows = conn.execute(
         "SELECT policies.policy_id, clients.full_name, clients.email, policies.policy_number, policies.end_date "
         "FROM policies JOIN clients ON policies.client_id=clients.client_id "
-        "WHERE policies.status='Active' AND policies.end_date BETWEEN ? AND ?",
+        "WHERE policies.deleted_at IS NULL AND policies.status='Active' AND policies.end_date BETWEEN ? AND ?",
         (str(today), str(today + timedelta(days=30)))
     ).fetchall()
     conn.close()
@@ -242,7 +304,7 @@ def get_due_reminders():
     } for row in rows]
 
 def get_record_by_policy_id(policy_id):
-    conn = sqlite3.connect(DB_PATH)
+    conn = connect_db()
     cursor = conn.cursor()
     cursor.execute("""
         SELECT 
@@ -260,21 +322,23 @@ def get_record_by_policy_id(policy_id):
         FROM policies
         JOIN clients ON policies.client_id = clients.client_id
         JOIN file_log ON policies.policy_id = file_log.policy_id
-        WHERE policies.policy_id = ?
+        WHERE policies.deleted_at IS NULL AND policies.policy_id = ?
     """, (policy_id,))
     result = cursor.fetchone()
     conn.close()
     return result
 
 def update_record(client_id, policy_id, full_name, phone, email, policy_number, policy_type, start_date, end_date, status, shelf_location):
-    conn = sqlite3.connect(DB_PATH)
+    validate_policy_data(full_name, phone, email, policy_number, policy_type,
+                         start_date, end_date, status, policy_id)
+    conn = connect_db()
     cursor = conn.cursor()
     previous_dates = cursor.execute(
-        "SELECT start_date, end_date FROM policies WHERE policy_id=?", (policy_id,)
+        "SELECT start_date, end_date FROM policies WHERE deleted_at IS NULL AND policy_id=?", (policy_id,)
     ).fetchone()
     cursor.execute("UPDATE clients SET full_name=?, phone=?, email=? WHERE client_id=?",
                    (full_name, phone, email, client_id))
-    cursor.execute("UPDATE policies SET policy_number=?, policy_type=?, start_date=?, end_date=?, status=? WHERE policy_id=?",
+    cursor.execute("UPDATE policies SET policy_number=?, policy_type=?, start_date=?, end_date=?, status=? WHERE deleted_at IS NULL AND policy_id=?",
                    (policy_number, policy_type, start_date, end_date, status, policy_id))
     cursor.execute("UPDATE file_log SET shelf_location=? WHERE policy_id=?",
                    (shelf_location, policy_id))
@@ -298,26 +362,24 @@ def update_record(client_id, policy_id, full_name, phone, email, policy_number, 
     conn.close()
 
 def delete_record(policy_id):
-    conn = sqlite3.connect(DB_PATH)
+    conn = connect_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT client_id FROM policies WHERE policy_id=?", (policy_id,))
+    cursor.execute("SELECT policy_number FROM policies WHERE deleted_at IS NULL AND policy_id=?", (policy_id,))
     row = cursor.fetchone()
     if row:
-        client_id = row[0]
-        cursor.execute("DELETE FROM file_log WHERE policy_id=?", (policy_id,))
-        cursor.execute("DELETE FROM policies WHERE policy_id=?", (policy_id,))
-        cursor.execute("DELETE FROM clients WHERE client_id=?", (client_id,))
+        deleted_at = datetime.now().isoformat(timespec="seconds")
+        cursor.execute("UPDATE policies SET deleted_at=? WHERE policy_id=?", (deleted_at, policy_id))
         cursor.execute(
             "INSERT INTO audit_log (policy_id, action, details, created_at) VALUES (?, ?, ?, ?)",
-            (policy_id, "deleted", "Policy record deleted", datetime.now().isoformat(timespec="seconds"))
+            (policy_id, "deleted", f"Policy {row[0]} soft-deleted", deleted_at)
         )
     conn.commit()
     conn.close()
 
 def mark_policy_expired(policy_id):
-    conn = sqlite3.connect(DB_PATH)
+    conn = connect_db()
     cursor = conn.cursor()
-    cursor.execute("UPDATE policies SET status='Expired' WHERE policy_id=?", (policy_id,))
+    cursor.execute("UPDATE policies SET status='Expired' WHERE deleted_at IS NULL AND policy_id=?", (policy_id,))
     cursor.execute(
         "INSERT INTO audit_log (policy_id, action, details, created_at) VALUES (?, ?, ?, ?)",
         (policy_id, "marked_expired", "Policy marked expired from risk dashboard", datetime.now().isoformat(timespec="seconds"))
@@ -339,7 +401,7 @@ def get_risk_flags():
         SELECT clients.full_name, policies.policy_number, policies.end_date, policies.policy_id
         FROM policies
         JOIN clients ON policies.client_id = clients.client_id
-        WHERE policies.status = 'Active' AND policies.end_date <= ? AND policies.end_date >= ?
+        WHERE policies.deleted_at IS NULL AND policies.status = 'Active' AND policies.end_date <= ? AND policies.end_date >= ?
     """, (str(soon), str(today)))
     for row in cursor.fetchall():
         flags.append({
@@ -355,7 +417,7 @@ def get_risk_flags():
         SELECT clients.full_name, policies.policy_number, policies.end_date, policies.policy_id
         FROM policies
         JOIN clients ON policies.client_id = clients.client_id
-        WHERE policies.status = 'Active' AND policies.end_date < ?
+        WHERE policies.deleted_at IS NULL AND policies.status = 'Active' AND policies.end_date < ?
     """, (str(today),))
     for row in cursor.fetchall():
         flags.append({
@@ -370,6 +432,7 @@ def get_risk_flags():
     cursor.execute("""
         SELECT policy_number, COUNT(*) as count
         FROM policies
+        WHERE deleted_at IS NULL
         GROUP BY policy_number
         HAVING count > 1
     """)
@@ -387,7 +450,7 @@ def get_risk_flags():
         SELECT clients.full_name, policies.policy_id
         FROM clients
         JOIN policies ON policies.client_id = clients.client_id
-        WHERE clients.email IS NULL OR clients.email = ''
+        WHERE policies.deleted_at IS NULL AND (clients.email IS NULL OR clients.email = '')
     """)
     for row in cursor.fetchall():
         flags.append({
@@ -400,53 +463,6 @@ def get_risk_flags():
 
     conn.close()
     return flags
-
-# ─── Document Intelligence ────────────────────────────────────────────────────
-
-def extract_policy_from_pdf(pdf_bytes):
-    text = ""
-    try:
-        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-            for page in pdf.pages:
-                text += page.extract_text() or ""
-    except Exception as e:
-        return None, f"Error reading PDF: {str(e)}"
-
-    if not text.strip():
-        return None, "Could not extract text from PDF"
-
-    prompt = f"""You are a data extraction assistant. Extract policy information from the following document text and return ONLY a JSON object with these exact keys:
-- full_name (client full name)
-- phone (phone number, empty string if not found)
-- email (email address, empty string if not found)
-- policy_number (policy number or ID)
-- policy_type (type of policy e.g. Motor, Life, Fire, Health)
-- start_date (in YYYY-MM-DD format, empty string if not found)
-- end_date (in YYYY-MM-DD format, empty string if not found)
-- status (Active or Expired)
-- shelf_location (empty string if not found)
-
-Return ONLY the JSON object, no explanation, no markdown, no backticks.
-
-Document text:
-{text[:3000]}"""
-
-    try:
-        if GEMINI_API_KEY == "YOUR_API_KEY_HERE":
-            return None, "❌ Gemini API key not configured. Please set your API key in the environment or code."
-        
-        response = client.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=prompt
-        )
-        raw = response.text.strip()
-        try:
-            data = json.loads(raw)
-            return data, None
-        except json.JSONDecodeError:
-            return None, "AI could not parse the document. Please fill in manually."
-    except Exception as e:
-        return None, f"API Error: {str(e)}. Check your API key is valid."
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
 
@@ -467,18 +483,16 @@ def index():
                 message = f"No records found for '{search_query}'"
 
         elif "add" in request.form:
-            add_client_and_policy(
-                request.form["full_name"],
-                request.form["phone"],
-                request.form["email"],
-                request.form["policy_number"],
-                request.form["policy_type"],
-                request.form["start_date"],
-                request.form["end_date"],
-                request.form["status"],
-                request.form["shelf_location"]
-            )
-            message = "Client and policy added successfully!"
+            try:
+                add_client_and_policy(
+                    request.form["full_name"], request.form["phone"], request.form["email"],
+                    request.form["policy_number"], request.form["policy_type"],
+                    request.form["start_date"], request.form["end_date"],
+                    request.form["status"], request.form["shelf_location"]
+                )
+                message = "Client and policy added successfully!"
+            except ValueError as error:
+                message = str(error)
 
     all_policies = get_all_policies(search_query, status_filter, policy_type_filter, expiry_window)
     risk_flags = get_risk_flags()
@@ -500,6 +514,8 @@ def upload_pdf():
     file = request.files["pdf_file"]
     if file.filename == "":
         return jsonify({"error": "No file selected"}), 400
+    if not allowed_file(file.filename, {"pdf"}):
+        return jsonify({"error": "Only PDF files are supported."}), 400
     pdf_bytes = file.read()
     data, error = extract_policy_from_pdf(pdf_bytes)
     if error:
@@ -509,20 +525,19 @@ def upload_pdf():
 @app.route("/edit/<int:policy_id>", methods=["GET", "POST"])
 def edit(policy_id):
     if request.method == "POST":
-        update_record(
-            request.form["client_id"],
-            policy_id,
-            request.form["full_name"],
-            request.form["phone"],
-            request.form["email"],
-            request.form["policy_number"],
-            request.form["policy_type"],
-            request.form["start_date"],
-            request.form["end_date"],
-            request.form["status"],
-            request.form["shelf_location"]
-        )
-        return redirect(url_for("index"))
+        try:
+            update_record(
+                request.form["client_id"], policy_id, request.form["full_name"],
+                request.form["phone"], request.form["email"], request.form["policy_number"],
+                request.form["policy_type"], request.form["start_date"],
+                request.form["end_date"], request.form["status"], request.form["shelf_location"]
+            )
+            return redirect(url_for("index"))
+        except ValueError as error:
+            record = get_record_by_policy_id(policy_id)
+            return render_template("edit.html", record=record, error=str(error),
+                                   renewal_history=get_renewal_history(policy_id),
+                                   documents=get_policy_documents(policy_id)), 400
     record = get_record_by_policy_id(policy_id)
     if not record:
         return redirect(url_for("index"))
@@ -562,7 +577,11 @@ def upload_document(policy_id):
     file = request.files.get("document")
     if not file or not file.filename:
         return jsonify({"error": "Select a document first."}), 400
+    if not allowed_file(file.filename):
+        return jsonify({"error": "Allowed files: PDF, JPG, JPEG, and PNG."}), 400
     filename = secure_filename(file.filename)
+    if not filename:
+        return jsonify({"error": "Invalid filename."}), 400
     stored_name = f"{policy_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}_{filename}"
     stored_path = os.path.join(UPLOAD_FOLDER, stored_name)
     file.save(stored_path)
@@ -602,4 +621,5 @@ def policy_history(policy_id):
 
 if __name__ == "__main__":
     init_db()
-    app.run(debug=True)
+    debug_mode = os.getenv("FLASK_DEBUG", "0").lower() in {"1", "true", "yes"}
+    app.run(debug=debug_mode)
