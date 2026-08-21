@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, jsonify, send_file
+from flask import Flask, render_template, request, redirect, url_for, jsonify, send_file, session
 import sqlite3
 from datetime import datetime, timedelta
 import io
@@ -6,7 +6,10 @@ import os
 import csv
 import shutil
 import re
+from contextlib import contextmanager
+from functools import wraps
 from werkzeug.utils import secure_filename
+from werkzeug.security import check_password_hash, generate_password_hash
 from services.ai_extraction import extract_policy_from_pdf
 
 try:
@@ -23,6 +26,8 @@ ALLOWED_DOCUMENT_EXTENSIONS = {"pdf", "jpg", "jpeg", "png"}
 app.config.update(
     SECRET_KEY=os.getenv("FLASK_SECRET_KEY", "development-only-change-me"),
     MAX_CONTENT_LENGTH=MAX_UPLOAD_MB * 1024 * 1024,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
 )
 
 @app.errorhandler(413)
@@ -36,6 +41,37 @@ def connect_db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+def login_required(view):
+    @wraps(view)
+    def wrapped_view(*args, **kwargs):
+        if "user_id" not in session:
+            return redirect(url_for("login", next=request.path))
+        return view(*args, **kwargs)
+    return wrapped_view
+
+def role_required(*roles):
+    def decorator(view):
+        @wraps(view)
+        @login_required
+        def wrapped_view(*args, **kwargs):
+            if session.get("role") not in roles:
+                return jsonify({"error": "You do not have permission to perform this action."}), 403
+            return view(*args, **kwargs)
+        return wrapped_view
+    return decorator
+
+@contextmanager
+def transaction():
+    conn = connect_db()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 # ─── Database Setup ───────────────────────────────────────────────────────────
 
@@ -116,6 +152,16 @@ def init_db():
             FOREIGN KEY (policy_id) REFERENCES policies(policy_id)
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'Viewer',
+            created_at TEXT NOT NULL,
+            active INTEGER NOT NULL DEFAULT 1
+        )
+    """)
     policy_columns = {row[1] for row in cursor.execute("PRAGMA table_info(policies)")}
     if "deleted_at" not in policy_columns:
         try:
@@ -123,6 +169,31 @@ def init_db():
         except sqlite3.OperationalError as error:
             if "duplicate column name" not in str(error).lower():
                 raise
+    for column, column_type in {
+        "premium": "REAL",
+        "currency": "TEXT",
+        "sum_insured": "REAL",
+        "deductible": "REAL",
+        "broker": "TEXT",
+        "underwriter": "TEXT",
+        "description": "TEXT",
+        "created_at": "TEXT",
+        "updated_at": "TEXT",
+    }.items():
+        if column not in policy_columns:
+            cursor.execute(f"ALTER TABLE policies ADD COLUMN {column} {column_type}")
+    admin_username = os.getenv("ADMIN_USERNAME", "").strip()
+    admin_password = os.getenv("ADMIN_PASSWORD", "")
+    if admin_username and admin_password:
+        existing_admin = cursor.execute(
+            "SELECT user_id FROM users WHERE username=?", (admin_username,)
+        ).fetchone()
+        if not existing_admin:
+            cursor.execute(
+                "INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
+                (admin_username, generate_password_hash(admin_password), "Admin",
+                 datetime.now().isoformat(timespec="seconds"))
+            )
     conn.commit()
     conn.close()
 
@@ -138,7 +209,8 @@ def log_audit(policy_id, action, details=""):
     conn.close()
 
 def validate_policy_data(full_name, phone, email, policy_number, policy_type,
-                         start_date, end_date, status, policy_id=None):
+                         start_date, end_date, status, policy_id=None,
+                         premium=None, sum_insured=None, deductible=None):
     required_values = {
         "full name": full_name,
         "phone": phone,
@@ -162,6 +234,13 @@ def validate_policy_data(full_name, phone, email, policy_number, policy_type,
         raise ValueError("Status must be Active or Expired.")
     if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
         raise ValueError("Enter a valid email address.")
+    for label, value in (("premium", premium), ("sum insured", sum_insured), ("deductible", deductible)):
+        if value not in (None, ""):
+            try:
+                if float(value) < 0:
+                    raise ValueError
+            except (TypeError, ValueError) as error:
+                raise ValueError(f"{label.title()} must be a non-negative number.") from error
 
     conn = connect_db()
     duplicate = conn.execute(
@@ -171,6 +250,21 @@ def validate_policy_data(full_name, phone, email, policy_number, policy_type,
     conn.close()
     if duplicate:
         raise ValueError(f"Policy number '{policy_number}' already exists.")
+
+def get_effective_status(start_date, end_date, stored_status):
+    """Return the user-facing lifecycle status calculated from policy dates."""
+    if stored_status != "Active":
+        return stored_status
+    try:
+        today = datetime.today().date()
+        end = datetime.strptime(end_date, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return stored_status
+    if end < today:
+        return "Expired"
+    if end <= today + timedelta(days=30):
+        return "Expiring Soon"
+    return "Active"
 
 def search_by_client_name(name):
     conn = connect_db()
@@ -184,7 +278,8 @@ def search_by_client_name(name):
             policies.status,
             file_log.shelf_location,
             clients.client_id,
-            policies.policy_id
+            policies.policy_id,
+            policies.end_date
         FROM policies
         JOIN clients ON policies.client_id = clients.client_id
         JOIN file_log ON policies.policy_id = file_log.policy_id
@@ -192,29 +287,55 @@ def search_by_client_name(name):
     """, (f"%{name}%",))
     results = cursor.fetchall()
     conn.close()
-    return results
+    return [
+        (*row[:4], get_effective_status(row[7], row[8], row[4]), *row[5:])
+        for row in results
+    ]
 
-def add_client_and_policy(full_name, phone, email, policy_number, policy_type, start_date, end_date, status, shelf_location):
+def add_client_and_policy(full_name, phone, email, policy_number, policy_type, start_date, end_date, status, shelf_location,
+                          premium=None, currency="", sum_insured=None, deductible=None,
+                          broker="", underwriter="", description=""):
     validate_policy_data(full_name, phone, email, policy_number, policy_type,
-                         start_date, end_date, status)
-    conn = connect_db()
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO clients (full_name, phone, email) VALUES (?, ?, ?)",
-                   (full_name, phone, email))
-    client_id = cursor.lastrowid
-    cursor.execute("""
-        INSERT INTO policies (policy_number, policy_type, start_date, end_date, status, client_id)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (policy_number, policy_type, start_date, end_date, status, client_id))
-    policy_id = cursor.lastrowid
-    cursor.execute("INSERT INTO file_log (policy_id, shelf_location) VALUES (?, ?)",
-                   (policy_id, shelf_location))
-    cursor.execute(
-        "INSERT INTO audit_log (policy_id, action, details, created_at) VALUES (?, ?, ?, ?)",
-        (policy_id, "created", f"Policy {policy_number} created", datetime.now().isoformat(timespec="seconds"))
-    )
-    conn.commit()
-    conn.close()
+                         start_date, end_date, status, premium=premium,
+                         sum_insured=sum_insured, deductible=deductible)
+    with transaction() as conn:
+        cursor = conn.cursor()
+        client = None
+        if email.strip():
+            client = cursor.execute(
+                "SELECT client_id FROM clients WHERE lower(trim(email))=lower(trim(?))",
+                (email,)
+            ).fetchone()
+        if not client and phone.strip():
+            client = cursor.execute(
+                "SELECT client_id FROM clients WHERE phone=?", (phone,)
+            ).fetchone()
+        if client:
+            client_id = client[0]
+            cursor.execute(
+                "UPDATE clients SET full_name=?, phone=?, email=? WHERE client_id=?",
+                (full_name, phone, email, client_id)
+            )
+        else:
+            cursor.execute("INSERT INTO clients (full_name, phone, email) VALUES (?, ?, ?)",
+                           (full_name, phone, email))
+            client_id = cursor.lastrowid
+        cursor.execute("""
+            INSERT INTO policies (policy_number, policy_type, start_date, end_date, status, client_id,
+                                  premium, currency, sum_insured, deductible, broker, underwriter, description,
+                                  created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (policy_number, policy_type, start_date, end_date, status, client_id,
+              premium or None, currency, sum_insured or None, deductible or None,
+              broker, underwriter, description, datetime.now().isoformat(timespec="seconds"),
+              datetime.now().isoformat(timespec="seconds")))
+        policy_id = cursor.lastrowid
+        cursor.execute("INSERT INTO file_log (policy_id, shelf_location) VALUES (?, ?)",
+                       (policy_id, shelf_location))
+        cursor.execute(
+            "INSERT INTO audit_log (policy_id, action, details, created_at) VALUES (?, ?, ?, ?)",
+            (policy_id, "created", f"Policy {policy_number} created", datetime.now().isoformat(timespec="seconds"))
+        )
     return policy_id
 
 def get_all_policies(search_query="", status="", policy_type="", expiry_window=""):
@@ -252,22 +373,25 @@ def get_all_policies(search_query="", status="", policy_type="", expiry_window="
         """ + where_clause + " ORDER BY clients.full_name ASC", parameters)
     results = cursor.fetchall()
     conn.close()
-    return results
+    return [
+        (*row[:4], get_effective_status(row[7], row[8], row[4]), *row[5:])
+        for row in results
+    ]
 
 def get_dashboard_stats():
     conn = connect_db()
     cursor = conn.cursor()
-    stats = {
-        "total": cursor.execute("SELECT COUNT(*) FROM policies WHERE deleted_at IS NULL").fetchone()[0],
-        "active": cursor.execute("SELECT COUNT(*) FROM policies WHERE deleted_at IS NULL AND status='Active'").fetchone()[0],
-        "expired": cursor.execute("SELECT COUNT(*) FROM policies WHERE deleted_at IS NULL AND status='Expired'").fetchone()[0],
-        "expiring_soon": cursor.execute(
-            "SELECT COUNT(*) FROM policies WHERE deleted_at IS NULL AND status='Active' AND end_date BETWEEN ? AND ?",
-            (str(datetime.today().date()), str(datetime.today().date() + timedelta(days=30)))
-        ).fetchone()[0]
-    }
+    policies = cursor.execute(
+        "SELECT start_date, end_date, status FROM policies WHERE deleted_at IS NULL"
+    ).fetchall()
     conn.close()
-    return stats
+    statuses = [get_effective_status(row[0], row[1], row[2]) for row in policies]
+    return {
+        "total": len(statuses),
+        "active": statuses.count("Active"),
+        "expired": statuses.count("Expired"),
+        "expiring_soon": statuses.count("Expiring Soon"),
+    }
 
 def get_renewal_history(policy_id):
     conn = connect_db()
@@ -318,7 +442,14 @@ def get_record_by_policy_id(policy_id):
             policies.start_date,
             policies.end_date,
             policies.status,
-            file_log.shelf_location
+            file_log.shelf_location,
+            policies.premium,
+            policies.currency,
+            policies.sum_insured,
+            policies.deductible,
+            policies.broker,
+            policies.underwriter,
+            policies.description
         FROM policies
         JOIN clients ON policies.client_id = clients.client_id
         JOIN file_log ON policies.policy_id = file_log.policy_id
@@ -328,64 +459,78 @@ def get_record_by_policy_id(policy_id):
     conn.close()
     return result
 
-def update_record(client_id, policy_id, full_name, phone, email, policy_number, policy_type, start_date, end_date, status, shelf_location):
-    validate_policy_data(full_name, phone, email, policy_number, policy_type,
-                         start_date, end_date, status, policy_id)
+def policy_exists(policy_id):
     conn = connect_db()
-    cursor = conn.cursor()
-    previous_dates = cursor.execute(
-        "SELECT start_date, end_date FROM policies WHERE deleted_at IS NULL AND policy_id=?", (policy_id,)
+    result = conn.execute(
+        "SELECT 1 FROM policies WHERE policy_id=? AND deleted_at IS NULL", (policy_id,)
     ).fetchone()
-    cursor.execute("UPDATE clients SET full_name=?, phone=?, email=? WHERE client_id=?",
-                   (full_name, phone, email, client_id))
-    cursor.execute("UPDATE policies SET policy_number=?, policy_type=?, start_date=?, end_date=?, status=? WHERE deleted_at IS NULL AND policy_id=?",
-                   (policy_number, policy_type, start_date, end_date, status, policy_id))
-    cursor.execute("UPDATE file_log SET shelf_location=? WHERE policy_id=?",
-                   (shelf_location, policy_id))
-    if previous_dates and previous_dates != (start_date, end_date):
-        cursor.execute(
-            "INSERT INTO renewal_history (policy_id, previous_start_date, previous_end_date, new_start_date, new_end_date, renewed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (policy_id, previous_dates[0], previous_dates[1], start_date, end_date,
-             datetime.now().isoformat(timespec="seconds"))
-        )
-        action = "renewed"
-        details = f"Policy dates changed from {previous_dates[0]} - {previous_dates[1]} to {start_date} - {end_date}"
-    else:
-        action = "updated"
-        details = f"Policy {policy_number} updated"
-    cursor.execute(
-        "INSERT INTO audit_log (policy_id, action, details, created_at) VALUES (?, ?, ?, ?)",
-        (policy_id, action, details, datetime.now().isoformat(timespec="seconds"))
-    )
-    conn.commit()
     conn.close()
+    return result is not None
 
-def delete_record(policy_id):
-    conn = connect_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT policy_number FROM policies WHERE deleted_at IS NULL AND policy_id=?", (policy_id,))
-    row = cursor.fetchone()
-    if row:
-        deleted_at = datetime.now().isoformat(timespec="seconds")
-        cursor.execute("UPDATE policies SET deleted_at=? WHERE policy_id=?", (deleted_at, policy_id))
+def update_record(client_id, policy_id, full_name, phone, email, policy_number, policy_type, start_date, end_date, status, shelf_location,
+                  premium=None, currency="", sum_insured=None, deductible=None,
+                  broker="", underwriter="", description=""):
+    validate_policy_data(full_name, phone, email, policy_number, policy_type,
+                         start_date, end_date, status, policy_id,
+                         premium=premium, sum_insured=sum_insured, deductible=deductible)
+    with transaction() as conn:
+        cursor = conn.cursor()
+        previous_dates = cursor.execute(
+            "SELECT start_date, end_date FROM policies WHERE deleted_at IS NULL AND policy_id=?", (policy_id,)
+        ).fetchone()
+        cursor.execute("UPDATE clients SET full_name=?, phone=?, email=? WHERE client_id=?",
+                       (full_name, phone, email, client_id))
+        cursor.execute("""
+            UPDATE policies SET policy_number=?, policy_type=?, start_date=?, end_date=?, status=?,
+                premium=?, currency=?, sum_insured=?, deductible=?, broker=?, underwriter=?,
+                description=?, updated_at=?
+            WHERE deleted_at IS NULL AND policy_id=?
+        """, (policy_number, policy_type, start_date, end_date, status,
+               premium or None, currency, sum_insured or None, deductible or None,
+               broker, underwriter, description, datetime.now().isoformat(timespec="seconds"), policy_id))
+        cursor.execute("UPDATE file_log SET shelf_location=? WHERE policy_id=?",
+                       (shelf_location, policy_id))
+        if previous_dates and previous_dates != (start_date, end_date):
+            cursor.execute(
+                "INSERT INTO renewal_history (policy_id, previous_start_date, previous_end_date, new_start_date, new_end_date, renewed_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (policy_id, previous_dates[0], previous_dates[1], start_date, end_date,
+                 datetime.now().isoformat(timespec="seconds"))
+            )
+            action = "renewed"
+            details = f"Policy dates changed from {previous_dates[0]} - {previous_dates[1]} to {start_date} - {end_date}"
+        else:
+            action = "updated"
+            details = f"Policy {policy_number} updated"
         cursor.execute(
             "INSERT INTO audit_log (policy_id, action, details, created_at) VALUES (?, ?, ?, ?)",
-            (policy_id, "deleted", f"Policy {row[0]} soft-deleted", deleted_at)
+            (policy_id, action, details, datetime.now().isoformat(timespec="seconds"))
         )
-    conn.commit()
-    conn.close()
+
+def delete_record(policy_id):
+    with transaction() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT policy_number FROM policies WHERE deleted_at IS NULL AND policy_id=?", (policy_id,))
+        row = cursor.fetchone()
+        if row:
+            deleted_at = datetime.now().isoformat(timespec="seconds")
+            cursor.execute("UPDATE policies SET deleted_at=? WHERE policy_id=?", (deleted_at, policy_id))
+            cursor.execute(
+                "INSERT INTO audit_log (policy_id, action, details, created_at) VALUES (?, ?, ?, ?)",
+                (policy_id, "deleted", f"Policy {row[0]} soft-deleted", deleted_at)
+            )
 
 def mark_policy_expired(policy_id):
-    conn = connect_db()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE policies SET status='Expired' WHERE deleted_at IS NULL AND policy_id=?", (policy_id,))
-    cursor.execute(
-        "INSERT INTO audit_log (policy_id, action, details, created_at) VALUES (?, ?, ?, ?)",
-        (policy_id, "marked_expired", "Policy marked expired from risk dashboard", datetime.now().isoformat(timespec="seconds"))
-    )
-    conn.commit()
-    conn.close()
+    if not policy_exists(policy_id):
+        return False
+    with transaction() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE policies SET status='Expired' WHERE deleted_at IS NULL AND policy_id=?", (policy_id,))
+        cursor.execute(
+            "INSERT INTO audit_log (policy_id, action, details, created_at) VALUES (?, ?, ?, ?)",
+            (policy_id, "marked_expired", "Policy marked expired from risk dashboard", datetime.now().isoformat(timespec="seconds"))
+        )
+    return True
 
 # ─── Step 1: Risk Flagging ────────────────────────────────────────────────────
 
@@ -466,7 +611,36 @@ def get_risk_flags():
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
 
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        conn = connect_db()
+        user = conn.execute(
+            "SELECT user_id, username, password_hash, role FROM users WHERE username=? AND active=1",
+            (username,)
+        ).fetchone()
+        conn.close()
+        if user and check_password_hash(user[2], password):
+            session.clear()
+            session["user_id"] = user[0]
+            session["username"] = user[1]
+            session["role"] = user[3]
+            next_url = request.args.get("next", "/")
+            if not next_url.startswith("/") or next_url.startswith("//"):
+                next_url = "/"
+            return redirect(next_url)
+        return render_template("login.html", error="Invalid username or password."), 401
+    return render_template("login.html")
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
 @app.route("/", methods=["GET", "POST"])
+@login_required
 def index():
     results = []
     message = ""
@@ -488,7 +662,11 @@ def index():
                     request.form["full_name"], request.form["phone"], request.form["email"],
                     request.form["policy_number"], request.form["policy_type"],
                     request.form["start_date"], request.form["end_date"],
-                    request.form["status"], request.form["shelf_location"]
+                    request.form["status"], request.form["shelf_location"],
+                    request.form.get("premium"), request.form.get("currency", ""),
+                    request.form.get("sum_insured"), request.form.get("deductible"),
+                    request.form.get("broker", ""), request.form.get("underwriter", ""),
+                    request.form.get("description", "")
                 )
                 message = "Client and policy added successfully!"
             except ValueError as error:
@@ -508,6 +686,7 @@ def index():
                            expiry_window=expiry_window)
 
 @app.route("/upload-pdf", methods=["POST"])
+@role_required("Admin", "Underwriter", "Operations")
 def upload_pdf():
     if "pdf_file" not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
@@ -523,6 +702,7 @@ def upload_pdf():
     return jsonify(data)
 
 @app.route("/edit/<int:policy_id>", methods=["GET", "POST"])
+@role_required("Admin", "Underwriter", "Operations")
 def edit(policy_id):
     if request.method == "POST":
         try:
@@ -530,7 +710,11 @@ def edit(policy_id):
                 request.form["client_id"], policy_id, request.form["full_name"],
                 request.form["phone"], request.form["email"], request.form["policy_number"],
                 request.form["policy_type"], request.form["start_date"],
-                request.form["end_date"], request.form["status"], request.form["shelf_location"]
+                request.form["end_date"], request.form["status"], request.form["shelf_location"],
+                request.form.get("premium"), request.form.get("currency", ""),
+                request.form.get("sum_insured"), request.form.get("deductible"),
+                request.form.get("broker", ""), request.form.get("underwriter", ""),
+                request.form.get("description", "")
             )
             return redirect(url_for("index"))
         except ValueError as error:
@@ -546,16 +730,20 @@ def edit(policy_id):
                            documents=get_policy_documents(policy_id))
 
 @app.route("/delete/<int:policy_id>", methods=["POST"])
+@role_required("Admin")
 def delete(policy_id):
     delete_record(policy_id)
     return redirect(url_for("index"))
 
 @app.route("/mark-expired/<int:policy_id>", methods=["POST"])
+@role_required("Admin", "Underwriter", "Operations")
 def mark_expired(policy_id):
-    mark_policy_expired(policy_id)
+    if not mark_policy_expired(policy_id):
+        return "Policy not found", 404
     return redirect(url_for("index"))
 
 @app.route("/export.csv")
+@login_required
 def export_csv():
     output = io.StringIO()
     writer = csv.writer(output)
@@ -566,6 +754,7 @@ def export_csv():
     return send_file(io.BytesIO(output.getvalue().encode("utf-8")), mimetype="text/csv", as_attachment=True, download_name="policies.csv")
 
 @app.route("/backup")
+@role_required("Admin")
 def backup_database():
     backup_name = f"policy_tracker_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
     backup_path = os.path.join(UPLOAD_FOLDER, backup_name)
@@ -573,7 +762,10 @@ def backup_database():
     return send_file(backup_path, as_attachment=True, download_name=backup_name)
 
 @app.route("/policy/<int:policy_id>/document", methods=["POST"])
+@role_required("Admin", "Operations", "Underwriter")
 def upload_document(policy_id):
+    if not policy_exists(policy_id):
+        return jsonify({"error": "Policy not found."}), 404
     file = request.files.get("document")
     if not file or not file.filename:
         return jsonify({"error": "Select a document first."}), 400
@@ -584,18 +776,25 @@ def upload_document(policy_id):
         return jsonify({"error": "Invalid filename."}), 400
     stored_name = f"{policy_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}_{filename}"
     stored_path = os.path.join(UPLOAD_FOLDER, stored_name)
-    file.save(stored_path)
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        "INSERT INTO policy_documents (policy_id, filename, stored_path, uploaded_at) VALUES (?, ?, ?, ?)",
-        (policy_id, filename, stored_path, datetime.now().isoformat(timespec="seconds"))
-    )
-    conn.commit()
-    conn.close()
-    log_audit(policy_id, "document_uploaded", filename)
+    try:
+        file.save(stored_path)
+        with transaction() as conn:
+            conn.execute(
+                "INSERT INTO policy_documents (policy_id, filename, stored_path, uploaded_at) VALUES (?, ?, ?, ?)",
+                (policy_id, filename, stored_path, datetime.now().isoformat(timespec="seconds"))
+            )
+            conn.execute(
+                "INSERT INTO audit_log (policy_id, action, details, created_at) VALUES (?, ?, ?, ?)",
+                (policy_id, "document_uploaded", filename, datetime.now().isoformat(timespec="seconds"))
+            )
+    except Exception:
+        if os.path.exists(stored_path):
+            os.remove(stored_path)
+        return jsonify({"error": "Document could not be saved."}), 500
     return redirect(url_for("edit", policy_id=policy_id))
 
 @app.route("/policy-document/<int:document_id>")
+@login_required
 def download_document(document_id):
     conn = sqlite3.connect(DB_PATH)
     row = conn.execute(
@@ -607,10 +806,12 @@ def download_document(document_id):
     return send_file(row[1], as_attachment=True, download_name=row[0])
 
 @app.route("/notifications/due")
+@login_required
 def due_notifications():
     return jsonify({"reminders": get_due_reminders(), "configured_channels": []})
 
 @app.route("/policy/<int:policy_id>/history")
+@login_required
 def policy_history(policy_id):
     conn = sqlite3.connect(DB_PATH)
     audit_rows = conn.execute(
@@ -623,3 +824,5 @@ if __name__ == "__main__":
     init_db()
     debug_mode = os.getenv("FLASK_DEBUG", "0").lower() in {"1", "true", "yes"}
     app.run(debug=debug_mode)
+    
+   

@@ -71,6 +71,7 @@
         .badge { padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; }
         .badge-active { background-color: #d4edda; color: #155724; }
         .badge-expired { background-color: #f8d7da; color: #721c24; }
+        .badge-expiring { background-color: #fff3cd; color: #856404; }
 
         .btn-edit {
             background-color: #ffc107;
@@ -274,7 +275,7 @@
                 <tr>
                     <td>{{ row[0] }}</td><td>{{ row[1] }}</td><td>{{ row[2] }}</td>
                     <td>{{ row[3] }}</td>
-                    <td><span class="badge {% if row[4] == 'Active' %}badge-active{% else %}badge-expired{% endif %}">{{ row[4] }}</span></td>
+                    <td><span class="badge {% if row[4] == 'Active' %}badge-active{% elif row[4] == 'Expiring Soon' %}badge-expiring{% else %}badge-expired{% endif %}">{{ row[4] }}</span></td>
                     <td>{{ row[5] }}</td>
                     <td>
                         <div class="action-cell">
@@ -304,6 +305,19 @@
                 <input type="text" id="f_policy_number" name="policy_number" placeholder="Policy Number (e.g. POL-004)" required>
                 <input type="text" id="f_policy_type" name="policy_type" placeholder="Policy Type (e.g. Motor, Life, Fire)" required>
             </div>
+            <div class="row">
+                <input type="number" step="0.01" min="0" name="premium" placeholder="Premium">
+                <input type="text" name="currency" placeholder="Currency (e.g. EUR)">
+            </div>
+            <div class="row">
+                <input type="number" step="0.01" min="0" name="sum_insured" placeholder="Sum Insured">
+                <input type="number" step="0.01" min="0" name="deductible" placeholder="Deductible">
+            </div>
+            <div class="row">
+                <input type="text" name="broker" placeholder="Broker">
+                <input type="text" name="underwriter" placeholder="Underwriter">
+            </div>
+            <textarea name="description" placeholder="Coverage or policy description" rows="3"></textarea>
             <div class="row">
                 <input type="date" id="f_start_date" name="start_date" required>
                 <input type="date" id="f_end_date" name="end_date" required>
@@ -335,7 +349,7 @@
                 <tr>
                     <td>{{ row[0] }}</td><td>{{ row[1] }}</td><td>{{ row[2] }}</td>
                     <td>{{ row[3] }}</td>
-                    <td><span class="badge {% if row[4] == 'Active' %}badge-active{% else %}badge-expired{% endif %}">{{ row[4] }}</span></td>
+                    <td><span class="badge {% if row[4] == 'Active' %}badge-active{% elif row[4] == 'Expiring Soon' %}badge-expiring{% else %}badge-expired{% endif %}">{{ row[4] }}</span></td>
                     <td>{{ row[5] }}</td>
                     <td>
                         <div class="action-cell">
