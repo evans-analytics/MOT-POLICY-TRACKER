@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>File Tracking - Policy Operations</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+    <style>
+        .tracking-panel { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:20px; box-shadow:var(--shadow); margin-bottom:18px; }
+        .tracking-grid { display:grid; grid-template-columns:1fr 1fr 1fr auto; gap:12px; align-items:end; }
+        .tracking-grid label { display:block; margin-bottom:5px; color:var(--muted); font-size:11px; font-weight:700; text-transform:uppercase; }
+        .tracking-grid input, .tracking-grid select { margin:0; }
+        .tracking-table { width:100%; border-collapse:collapse; }
+        .tracking-table th { background:var(--brand-strong); color:white; padding:11px; text-align:left; font-size:11px; }
+        .tracking-table td { padding:11px; border-bottom:1px solid var(--border); font-size:12px; }
+        .movement-open { color:var(--warning); font-weight:700; }.movement-returned{color:var(--success);font-weight:700}
+        @media(max-width:800px){.tracking-grid{grid-template-columns:1fr}}
+    </style>
+</head>
+<body>
+<aside class="app-sidebar"><div class="app-brand">Policy Operations<small>Insurance intelligence platform</small></div><nav class="app-nav"><a href="/">Dashboard</a><div class="app-nav-label">Portfolio</div><a href="/">Policies</a><a href="/">Renewals</a><div class="app-nav-label">Operations</div><a href="/claims">Claims</a><a href="/file-tracking" class="active">File Tracking</a><a href="/">Documents</a><div class="app-nav-label">Risk &amp; Analytics</div><a href="/risk-intelligence">Risk Intelligence</a><a href="/analytics">Analytics</a><a href="/export.csv">Reports</a></nav><div class="app-sidebar-footer">Secure operations workspace</div></aside>
+<div class="app-main"><header class="app-topbar"><span class="app-user">File tracking · {{ session.get('username', '') }}</span><span class="topbar-actions"><a href="/" class="topbar-link">Dashboard</a><form method="POST" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="logout-button" type="submit">Sign out</button></form></span></header><main class="app-content"><p class="record-eyebrow">Operations</p><h1 class="app-page-title">File tracking</h1><p class="app-page-subtitle">Track physical policy files through checkout and return events.</p>
+{% if error %}<div class="message">{{ error }}</div>{% endif %}
+<section class="tracking-panel"><h2>Check out a file</h2><form method="POST"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="tracking-grid"><div><label>Policy</label><select name="policy_id" required>{% for policy in policies %}<option value="{{ policy[0] }}">{{ policy[1] }} · {{ policy[2] }}</option>{% endfor %}</select></div><div><label>Shelf / destination</label><input name="shelf_location" placeholder="Desk 4 or Shelf A-2" required></div><div><label>Checked out by</label><input name="checked_out_by" value="{{ session.get('username','') }}" required></div><button type="submit">Check out</button></div></form></section>
+<section class="tracking-panel"><h2>Movement history</h2><table class="tracking-table"><thead><tr><th>Policy</th><th>Location</th><th>Checked out by</th><th>Checked out</th><th>Status</th><th>Action</th></tr></thead><tbody>{% for movement in movements %}<tr><td>{{ movement[2] }}</td><td>{{ movement[3] }}</td><td>{{ movement[4] }}</td><td>{{ movement[5] }}</td><td class="{% if movement[6] %}movement-returned{% else %}movement-open{% endif %}">{% if movement[6] %}Returned {{ movement[6] }}{% else %}Checked out{% endif %}</td><td>{% if not movement[6] %}<form method="POST" action="/file-tracking/{{ movement[0] }}/return"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit">Return file</button></form>{% else %}-{% endif %}</td></tr>{% else %}<tr><td colspan="6">No file movements recorded yet.</td></tr>{% endfor %}</tbody></table></section>
+</main></div>
+</body></html>

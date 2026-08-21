@@ -22,6 +22,7 @@
         <p>Sign in to access policy operations.</p>
         {% if error %}<div class="error">{{ error }}</div>{% endif %}
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <label for="username">Username</label>
             <input id="username" name="username" autocomplete="username" required>
             <label for="password">Password</label>

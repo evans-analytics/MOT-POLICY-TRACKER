@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>INSURANCE FILE POLICY TRACKER</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: Arial, sans-serif; }
         body { background-color: #f0f2f5; }
@@ -94,6 +95,7 @@
             cursor: pointer;
             font-weight: bold;
         }
+        .btn-risk { background-color: #17a2b8; color: white; padding: 6px 12px; font-size: 12px; border-radius: 4px; text-decoration: none; font-weight: bold; }
 
         .action-cell { display: flex; gap: 6px; align-items: center; }
 
@@ -177,28 +179,60 @@
 </head>
 <body>
 
-<div class="navbar">🗂 INSURANCE POLICY TRACKER</div>
+<aside class="app-sidebar">
+    <div class="app-brand">Policy Operations<small>Insurance intelligence platform</small></div>
+    <nav class="app-nav">
+        <a class="active" href="/">Dashboard</a>
+        <div class="app-nav-label">Portfolio</div>
+        <a href="#policies">Policies</a>
+        <a href="#renewals">Renewals</a>
+        <div class="app-nav-label">Operations</div>
+        {% if session.get('role') in ['Admin', 'Claims Officer'] %}<a href="/claims">Claims</a>{% endif %}
+        <a href="#documents">Documents</a>
+        <a href="/file-tracking">File Tracking</a>
+        <div class="app-nav-label">Risk &amp; Analytics</div>
+        <a href="/risk-intelligence">Risk Intelligence</a>
+        <a href="/analytics">Analytics</a>
+        <a href="/export.csv">Reports</a>
+        <div class="app-nav-label">System</div>
+        {% if session.get('role') == 'Admin' %}<a href="#users">Users</a>{% endif %}
+        <a href="#audit">Audit Log</a>
+    </nav>
+    <div class="app-sidebar-footer">Secure operations workspace</div>
+</aside>
+<div class="app-main">
+<header class="app-topbar">
+    <input id="global-search" class="app-search" type="search" placeholder="Search policies, clients, claims...  Ctrl K">
+    <span class="app-user">{{ session.get('username', '') }} · {{ session.get('role', '') }}
+        <form method="POST" action="/logout" style="display:inline; margin-left:12px;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" style="padding:5px 10px; font-size:12px;">Sign out</button>
+        </form>
+    </span>
+</header>
+<main class="app-content">
+<div class="app-page-title">Portfolio dashboard</div>
+<p class="app-page-subtitle">A focused view of policy health, renewals, and operational risk.</p>
 
 <div class="container">
 
     <div class="stats">
-        <div class="stat"><strong>{{ stats.total }}</strong><span>Total policies</span></div>
-        <div class="stat"><strong>{{ stats.active }}</strong><span>Active policies</span></div>
-        <div class="stat"><strong>{{ stats.expiring_soon }}</strong><span>Expiring within 30 days</span></div>
-        <div class="stat"><strong>{{ stats.expired }}</strong><span>Expired policies</span></div>
+        <div class="stat"><span class="stat-kicker">Portfolio</span><strong>{{ stats.total }}</strong><span>Total policies</span></div>
+        <div class="stat"><span class="stat-kicker">In force</span><strong>{{ stats.active }}</strong><span>Active policies</span></div>
+        <div class="stat"><span class="stat-kicker">Attention</span><strong>{{ stats.expiring_soon }}</strong><span>Expiring soon</span></div>
+        <div class="stat stat-claim"><span class="stat-kicker">Operations</span><strong>{{ stats.open_claims }}</strong><span>Open claims</span></div>
+        <div class="stat"><span class="stat-kicker">Premium</span><strong>{{ '%.2f'|format(stats.total_premium) }}</strong><span>Total premium</span></div>
+        <div class="stat stat-exposure"><span class="stat-kicker">Exposure</span><strong>{{ '%.2f'|format(stats.total_exposure) }}</strong><span>Total sum insured</span></div>
     </div>
 
     {% if message %}
     <div class="message">{{ message }}</div>
     {% endif %}
 
-    <!-- ── Step 1: Risk Dashboard ── -->
+    <div class="dashboard-grid">
+    <!-- ── Risk Dashboard ── -->
     <div class="card">
-        <h2>🚨 Risk Dashboard
-            <span style="font-size:13px; font-weight:normal; color:#888; margin-left:10px;">
-                {{ risk_flags|length }} alert(s)
-            </span>
-        </h2>
+        <div class="section-heading"><h2>Risk intelligence</h2><small>{{ risk_flags|length }} alert(s)</small></div>
         {% if risk_flags %}
             {% for flag in risk_flags %}
             <div class="flag flag-{{ flag.level }}">
@@ -211,6 +245,7 @@
                     </a>
                     {% if flag.type == 'expired_active' %}
                     <form method="POST" action="/mark-expired/{{ flag.policy_id }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button type="submit">Mark expired</button>
                     </form>
                     {% endif %}
@@ -223,18 +258,73 @@
         {% endif %}
     </div>
 
+    <div class="card">
+        <div class="section-heading"><h2>Portfolio performance</h2><small>Current book</small></div>
+        <div class="metric-list">
+            <div class="metric-row"><span>Active portfolio</span><strong>{{ stats.active }} policies</strong></div>
+            <div class="metric-row"><span>Renewal attention</span><strong>{{ stats.expiring_soon }} due within 30 days</strong></div>
+            <div class="metric-row"><span>Open claims</span><strong>{{ stats.open_claims }}</strong></div>
+            <div class="metric-row"><span>Recorded exposure</span><strong>{{ '%.2f'|format(stats.total_exposure) }}</strong></div>
+        </div>
+    </div>
+    </div>
+
+    <div class="analytics-grid">
+        <div class="card chart-panel">
+            <h2>Policy mix</h2>
+            <p class="chart-subtitle">Distribution by policy type</p>
+            <div class="donut-wrap">
+                <div class="donut" aria-label="Policy type distribution"></div>
+                <div class="legend">
+                    {% for item in analytics.policy_types[:4] %}<span><i></i>{{ item.label }} {{ item.count }}</span>{% else %}<span>No policy mix data</span>{% endfor %}
+                </div>
+            </div>
+        </div>
+        <div class="card chart-panel">
+            <h2>Portfolio trend</h2>
+            <p class="chart-subtitle">Operational indicators across the current book</p>
+            <div class="trend-chart"><div class="trend-axis"><span>100</span><span>50</span><span>0</span></div><div class="trend-lines"></div></div>
+            <div class="legend"><span><i></i>Active portfolio</span><span><i style="background:#d7a94b"></i>Renewal pressure</span></div>
+        </div>
+    </div>
+
+    <div class="analytics-grid-bottom">
+        <div class="card chart-panel">
+            <h2>Risk heatmap</h2>
+            <p class="chart-subtitle">Signals by operational category</p>
+            <div class="heatmap"><span></span><span>Low</span><span>Watch</span><span>High</span><span>Critical</span><span>Severe</span><span class="label">Expiry</span><span class="h1">{{ stats.active }}</span><span class="h2">{{ stats.expiring_soon }}</span><span class="h3">0</span><span class="h4">0</span><span class="h4">0</span><span class="label">Documents</span><span class="h2">0</span><span class="h3">{{ risk_flags|length }}</span><span class="h3">0</span><span class="h4">0</span><span class="h4">0</span><span class="label">Claims</span><span class="h1">{{ stats.open_claims }}</span><span class="h2">0</span><span class="h3">0</span><span class="h4">0</span><span class="h4">0</span></div>
+        </div>
+        <div class="card chart-panel">
+            <h2>Policy distribution</h2>
+            <p class="chart-subtitle">Largest segments in the portfolio</p>
+            <div class="distribution">{% for item in analytics.policy_types[:5] %}<div class="distribution-row"><span>{{ item.label }}</span><b style="width:{{ [item.count * 100 / stats.total, 100]|min }}%"></b><strong>{{ item.count }}</strong></div>{% else %}<span class="chart-subtitle">No policies recorded</span>{% endfor %}</div>
+        </div>
+    </div>
+
     <!-- ── Document Intelligence ── -->
     <div class="card">
-        <h2>🤖 Document Intelligence — Upload a Policy PDF</h2>
-        <p style="font-size:13px; color:#666; margin-bottom:15px;">
-            Upload a policy document and AI will automatically extract the client and policy details for you.
-        </p>
-        <div class="upload-area" onclick="document.getElementById('pdf_input').click()">
-            📄 Click to upload a PDF policy document
-            <input type="file" id="pdf_input" accept=".pdf">
+        <div class="section-heading"><h2>Document intelligence</h2><small>Assisted extraction</small></div>
+        <div class="intelligence-panel">
+            <div>
+                <div class="upload-zone" onclick="document.getElementById('pdf_input').click()">
+                    <div><strong>Select a policy document</strong><small>PDF only · text-based documents work best</small></div>
+                    <input type="file" id="pdf_input" accept=".pdf">
+                </div>
+                <button class="btn-extract" onclick="extractFromPDF()">Extract fields</button>
+                <div class="extract-status" id="extract-status">Ready for document review.</div>
+            </div>
+            <div class="intelligence-review">
+                <h3>Extraction review</h3>
+                <div class="extraction-state"><span class="state-dot"></span><span id="extraction-state">Waiting for a document</span></div>
+                <div class="extracted-fields">
+                    <div class="extracted-field"><span>Policy number</span><strong id="review-policy-number">Not extracted</strong></div>
+                    <div class="extracted-field"><span>Client</span><strong id="review-client">Not extracted</strong></div>
+                    <div class="extracted-field"><span>Coverage dates</span><strong id="review-dates">Not extracted</strong></div>
+                    <div class="extracted-field"><span>Review confidence</span><strong class="confidence confidence-review" id="review-confidence">Verify before saving</strong></div>
+                </div>
+                <p class="verification-note">Extracted values are placed into the policy form for review. Confirm every field before saving the record.</p>
+            </div>
         </div>
-        <button class="btn-extract" onclick="extractFromPDF()">⚡ Extract with AI</button>
-        <div class="extract-status" id="extract-status"></div>
     </div>
 
     <!-- ── Search ── -->
@@ -280,7 +370,9 @@
                     <td>
                         <div class="action-cell">
                             <a href="/edit/{{ row[7] }}" class="btn-edit">✏️ Edit</a>
+                            <a href="/risk-score/{{ row[7] }}" class="btn-risk" target="_blank">Risk</a>
                             <form method="POST" action="/delete/{{ row[7] }}" onsubmit="return confirm('Are you sure?')">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <button type="submit" class="btn-delete">🗑️ Delete</button>
                             </form>
                         </div>
@@ -296,6 +388,7 @@
     <div class="card">
         <h2> Add a New Client & Policy</h2>
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="row">
                 <input type="text" id="f_full_name" name="full_name" placeholder="Client Full Name" required>
                 <input type="text" id="f_phone" name="phone" placeholder="Phone Number" required>
@@ -354,7 +447,9 @@
                     <td>
                         <div class="action-cell">
                             <a href="/edit/{{ row[7] }}" class="btn-edit">✏️ Edit</a>
+                            <a href="/risk-score/{{ row[7] }}" class="btn-risk" target="_blank">Risk</a>
                             <form method="POST" action="/delete/{{ row[7] }}" onsubmit="return confirm('Are you sure?')">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <button type="submit" class="btn-delete">🗑️ Delete</button>
                             </form>
                         </div>
@@ -371,12 +466,22 @@
 </div>
 
 <footer>&copy; 2026 Evans Boateng. All rights reserved.</footer>
+<div id="command-palette" class="command-palette" role="dialog" aria-modal="true" aria-label="Global search">
+    <div class="command-box">
+        <input id="command-input" class="command-input" placeholder="Search clients, policies, claims, documents..." autocomplete="off">
+        <div id="command-results" class="command-results"><div class="command-result"><span>Start typing to search the workspace</span><small>Esc to close</small></div></div>
+    </div>
+</div>
+</main>
+</div>
 
 <script>
     document.getElementById('pdf_input').addEventListener('change', function() {
         const area = document.querySelector('.upload-area');
         if (this.files.length > 0) {
-            area.textContent = ' ' + this.files[0].name;
+            area.querySelector('strong').textContent = this.files[0].name;
+            area.querySelector('small').textContent = 'Document selected and ready to process';
+            document.getElementById('extraction-state').textContent = 'Document selected';
         }
     });
 
@@ -388,10 +493,15 @@
             return;
         }
         status.textContent = 'Extracting with AI... please wait.';
+        document.getElementById('extraction-state').textContent = 'Processing document';
         const formData = new FormData();
         formData.append('pdf_file', fileInput.files[0]);
         try {
-            const response = await fetch('/upload-pdf', { method: 'POST', body: formData });
+            const response = await fetch('/upload-pdf', {
+                method: 'POST',
+                body: formData,
+                headers: { 'X-CSRFToken': '{{ csrf_token() }}' }
+            });
             const data = await response.json();
             if (data.error) {
                 status.textContent = ' ' + data.error;
@@ -406,13 +516,19 @@
             document.getElementById('f_end_date').value       = data.end_date || '';
             document.getElementById('f_shelf_location').value = data.shelf_location || '';
             if (data.status) document.getElementById('f_status').value = data.status;
-            status.textContent = ' Details extracted! Review the form below and click Add Policy.';
+            document.getElementById('extraction-state').textContent = 'Fields extracted for review';
+            document.getElementById('review-policy-number').textContent = data.policy_number || 'Not found';
+            document.getElementById('review-client').textContent = data.full_name || 'Not found';
+            document.getElementById('review-dates').textContent = [data.start_date, data.end_date].filter(Boolean).join(' to ') || 'Not found';
+            document.getElementById('review-confidence').textContent = 'Review required';
+            status.textContent = 'Details extracted. Review the policy form before saving.';
             document.getElementById('f_full_name').scrollIntoView({ behavior: 'smooth', block: 'center' });
         } catch (err) {
             status.textContent = ' Something went wrong. Please try again.';
         }
     }
 </script>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
 
 </body>
 </html>

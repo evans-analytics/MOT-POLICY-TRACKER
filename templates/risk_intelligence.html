@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Risk Intelligence - Policy Operations</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+    <style>
+        .risk-hero { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 22px; }
+        .risk-score { min-width: 150px; padding: 18px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); text-align: center; box-shadow: var(--shadow); }
+        .risk-score strong { display: block; color: var(--brand); font-size: 38px; }
+        .risk-score span { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+        .risk-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 18px; }
+        .risk-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: var(--shadow); }
+        .risk-panel h2 { margin: 0 0 14px; font-size: 16px; }
+        .risk-item { padding: 12px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+        .risk-item:last-child { border-bottom: 0; }
+        .risk-item a { color: var(--brand); font-weight: 700; text-decoration: none; }
+        .risk-item p { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+        .risk-level { float: right; padding: 4px 8px; border-radius: 12px; font-size: 10px; font-weight: 700; }
+        .risk-high { background: #fbeaea; color: var(--danger); }
+        .risk-medium { background: #fff5df; color: var(--warning); }
+        .risk-low { background: #eaf6ef; color: var(--success); }
+        .risk-table { width: 100%; border-collapse: collapse; }
+        .risk-table th { background: var(--brand-strong); color: white; padding: 11px; text-align: left; font-size: 11px; }
+        .risk-table td { padding: 11px; border-bottom: 1px solid var(--border); font-size: 12px; }
+        @media (max-width: 800px) { .risk-hero, .risk-columns { display: block; } .risk-score { margin-top: 16px; } .risk-panel { margin-bottom: 16px; overflow-x: auto; } }
+    </style>
+</head>
+<body>
+    <aside class="app-sidebar">
+        <div class="app-brand">Policy Operations<small>Insurance intelligence platform</small></div>
+        <nav class="app-nav">
+            <a href="/">Dashboard</a>
+            <div class="app-nav-label">Portfolio</div><a href="/">Policies</a><a href="/">Renewals</a>
+            <div class="app-nav-label">Operations</div>{% if session.get('role') in ['Admin', 'Claims Officer'] %}<a href="/claims">Claims</a>{% endif %}<a href="/">Documents</a><a href="/">File Tracking</a>
+            <div class="app-nav-label">Risk &amp; Analytics</div><a class="active" href="/risk-intelligence">Risk Intelligence</a><a href="/">Analytics</a><a href="/export.csv">Reports</a>
+        </nav>
+        <div class="app-sidebar-footer">Secure operations workspace</div>
+    </aside>
+    <div class="app-main">
+        <header class="app-topbar"><span class="app-user">Risk intelligence · {{ session.get('username', '') }}</span><span class="topbar-actions"><a href="/" class="topbar-link">Dashboard</a><form method="POST" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="logout-button" type="submit">Sign out</button></form></span></header>
+        <main class="app-content">
+            <div class="risk-hero"><div><p class="record-eyebrow">Risk &amp; analytics</p><h1 class="app-page-title">Risk intelligence</h1><p class="app-page-subtitle">Prioritized exposure and data-quality signals across the active portfolio.</p></div><div class="risk-score"><strong>{{ portfolio_score }}</strong><span>Portfolio risk score</span></div></div>
+            <div class="risk-columns">
+                <section class="risk-panel"><h2>Critical risks <span class="risk-level risk-high">{{ critical|length }}</span></h2>{% if critical %}{% for item in critical %}<div class="risk-item"><span class="risk-level risk-high">{{ item.score }}/100</span><a href="/edit/{{ item.policy_id }}">Policy #{{ item.policy_id }}</a><p>{{ item.reasons|join(', ') }}</p></div>{% endfor %}{% else %}<p class="app-page-subtitle">No critical risks detected.</p>{% endif %}</section>
+                <section class="risk-panel"><h2>Warnings <span class="risk-level risk-medium">{{ warnings|length }}</span></h2>{% if warnings %}{% for item in warnings %}<div class="risk-item"><span class="risk-level risk-medium">{{ item.score }}/100</span><a href="/edit/{{ item.policy_id }}">Policy #{{ item.policy_id }}</a><p>{{ item.reasons|join(', ') }}</p></div>{% endfor %}{% else %}<p class="app-page-subtitle">No warning-level risks detected.</p>{% endif %}</section>
+            </div>
+            <section class="risk-panel"><h2>Portfolio risk register</h2><table class="risk-table"><thead><tr><th>Policy</th><th>Score</th><th>Level</th><th>Reasons</th><th>Action</th></tr></thead><tbody>{% for item in scores %}<tr><td>#{{ item.policy_id }}</td><td>{{ item.score }}/100</td><td><span class="risk-level risk-{{ item.level|lower }}">{{ item.level }}</span></td><td>{{ item.reasons|join(', ') or 'No issues detected' }}</td><td><a href="/edit/{{ item.policy_id }}">Review</a></td></tr>{% else %}<tr><td colspan="5">No active policies to assess.</td></tr>{% endfor %}</tbody></table></section>
+        </main>
+    </div>
+</body>
+</html>

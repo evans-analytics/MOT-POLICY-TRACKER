@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claims - Insurance Policy Tracker</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+    <style>
+        * { box-sizing: border-box; font-family: Arial, sans-serif; }
+        body { margin: 0; background: #f0f2f5; color: #333; }
+        .navbar { background: #003366; color: white; padding: 15px 30px; font-size: 20px; font-weight: bold; }
+        .container { max-width: 1100px; margin: 30px auto; padding: 0 20px; }
+        .card { background: white; border-radius: 8px; padding: 24px; margin-bottom: 24px; box-shadow: 0 2px 8px rgba(0,0,0,.1); }
+        h1, h2 { color: #003366; margin-top: 0; }
+        .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+        .stat { padding: 16px; border-top: 4px solid #003366; background: white; border-radius: 6px; }
+        .stat strong { display: block; color: #003366; font-size: 24px; }
+        .stat span { color: #666; font-size: 13px; }
+        .row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+        label { display: block; color: #555; font-size: 13px; font-weight: bold; margin-bottom: 5px; }
+        input, select, textarea { width: 100%; padding: 10px; margin-bottom: 12px; border: 1px solid #ccc; border-radius: 5px; font-size: 14px; }
+        button { padding: 10px 18px; border: 0; border-radius: 5px; background: #003366; color: white; font-weight: bold; cursor: pointer; }
+        table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+        th { background: #003366; color: white; text-align: left; padding: 10px; font-size: 12px; }
+        td { padding: 10px; border-bottom: 1px solid #eee; font-size: 13px; }
+        .badge { padding: 4px 8px; border-radius: 10px; background: #d1ecf1; color: #0c5460; font-size: 12px; font-weight: bold; }
+        .error { padding: 10px; color: #721c24; background: #f8d7da; border-radius: 5px; margin-bottom: 15px; }
+        .back { color: white; float: right; font-size: 13px; font-weight: normal; }
+        @media (max-width: 700px) { .stats, .row { grid-template-columns: 1fr; } table { display: block; overflow-x: auto; } }
+    </style>
+</head>
+<body>
+    <aside class="app-sidebar">
+        <div class="app-brand">Policy Operations<small>Insurance intelligence platform</small></div>
+        <nav class="app-nav">
+            <a href="/">Dashboard</a>
+            <div class="app-nav-label">Portfolio</div><a href="/">Policies</a><a href="/">Renewals</a>
+            <div class="app-nav-label">Operations</div><a class="active" href="/claims">Claims</a><a href="/">Documents</a><a href="/">File Tracking</a>
+            <div class="app-nav-label">Risk &amp; Analytics</div><a href="/">Risk Intelligence</a><a href="/">Analytics</a><a href="/export.csv">Reports</a>
+        </nav>
+        <div class="app-sidebar-footer">Secure operations workspace</div>
+    </aside>
+    <div class="app-main">
+    <header class="app-topbar"><span class="app-user">Claims operations · {{ session.get('username', '') }}</span><span class="topbar-actions"><a href="/" class="topbar-link">Dashboard</a><form method="POST" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="logout-button" type="submit">Sign out</button></form></span></header>
+    <main class="container">
+        <h1>Claims Management</h1>
+        <div class="stats">
+            <div class="stat"><strong>{{ stats.total }}</strong><span>Total claims</span></div>
+            <div class="stat"><strong>{{ stats.open }}</strong><span>Open claims</span></div>
+            <div class="stat"><strong>{{ stats.approved }}</strong><span>Approved claims</span></div>
+        </div>
+        <section class="card">
+            <h2>Report a claim</h2>
+            {% if error %}<div class="error">{{ error }}</div>{% endif %}
+            <form method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="row">
+                    <div><label>Claim number</label><input name="claim_number" required></div>
+                    <div><label>Policy</label><select name="policy_id" required>{% for policy in policies %}<option value="{{ policy[0] }}">{{ policy[1] }} - {{ policy[2] }}</option>{% endfor %}</select></div>
+                </div>
+                <div class="row">
+                    <div><label>Date reported</label><input type="date" name="date_reported" required></div>
+                    <div><label>Claim type</label><input name="claim_type" placeholder="Collision, theft, fire..." required></div>
+                </div>
+                <div class="row">
+                    <div><label>Amount claimed</label><input type="number" min="0" step="0.01" name="amount_claimed"></div>
+                    <div><label>Adjuster</label><input name="adjuster"></div>
+                </div>
+                <label>Notes</label><textarea name="notes" rows="3"></textarea>
+                <button type="submit">Create claim</button>
+            </form>
+        </section>
+        <section class="card">
+            <h2>Claim register</h2>
+            {% if claims %}<table><thead><tr><th>Claim</th><th>Client</th><th>Policy</th><th>Type</th><th>Reported</th><th>Amount</th><th>Status</th><th>Update</th></tr></thead><tbody>
+            {% for claim in claims %}<tr><td>{{ claim[1] }}</td><td>{{ claim[9] }}</td><td>{{ claim[10] }}</td><td>{{ claim[3] }}</td><td>{{ claim[2] }}</td><td>{{ claim[4] or '-' }}</td><td><span class="badge">{{ claim[7] }}</span></td><td><form method="POST" action="/claims/{{ claim[0] }}/status"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><select name="status"><option>Reported</option><option>Under Investigation</option><option>Assessment</option><option>Approved</option><option>Rejected</option><option>Payment</option><option>Closed</option></select><button type="submit">Save</button></form></td></tr>{% endfor %}
+            </tbody></table>{% else %}<p>No claims recorded yet.</p>{% endif %}
+        </section>
+    </main>
+    </div>
+</body>
+</html>

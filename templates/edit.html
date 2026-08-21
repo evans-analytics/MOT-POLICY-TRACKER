@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Edit Record - MOT Policy Tracker</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
     <style>
         * {
             margin: 0;
@@ -101,15 +102,55 @@
 </head>
 <body>
 
-    <div class="navbar">🗂 MOT POLICY TRACKER</div>
+    <aside class="app-sidebar">
+        <div class="app-brand">Policy Operations<small>Insurance intelligence platform</small></div>
+        <nav class="app-nav">
+            <a href="/">Dashboard</a>
+            <div class="app-nav-label">Portfolio</div><a class="active" href="/">Policies</a><a href="/">Renewals</a>
+            <div class="app-nav-label">Operations</div>{% if session.get('role') in ['Admin', 'Claims Officer'] %}<a href="/claims">Claims</a>{% endif %}<a href="/">Documents</a><a href="/">File Tracking</a>
+            <div class="app-nav-label">Risk &amp; Analytics</div><a href="/">Risk Intelligence</a><a href="/">Analytics</a><a href="/export.csv">Reports</a>
+        </nav>
+        <div class="app-sidebar-footer">Secure operations workspace</div>
+    </aside>
+    <div class="app-main">
+    <header class="app-topbar"><span class="app-user">Policy record · {{ session.get('username', '') }}</span><span class="topbar-actions"><a href="/" class="topbar-link">Dashboard</a><form method="POST" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="logout-button" type="submit">Sign out</button></form></span></header>
 
     <div class="container">
-        <div class="card">
+        <div class="record-header">
+            <div>
+                <p class="record-eyebrow">Policy record</p>
+                <h1 class="record-title">{{ record[5] }}</h1>
+                <p class="record-subtitle">{{ record[1] }} · {{ record[6] }}</p>
+            </div>
+            <span class="record-status">{{ effective_status }}</span>
+        </div>
+        <div class="record-metrics">
+            <div class="record-metric"><span>Premium</span><strong>{{ record[11] or 'Not recorded' }} {{ record[12] or '' }}</strong></div>
+            <div class="record-metric"><span>Sum insured</span><strong>{{ record[13] or 'Not recorded' }}</strong></div>
+            <div class="record-metric"><span>Start date</span><strong>{{ record[7] }}</strong></div>
+            <div class="record-metric"><span>End date</span><strong>{{ record[8] }}</strong></div>
+            <div class="record-metric"><span>Risk review</span><strong><a href="/risk-score/{{ record[4] }}">View score</a></strong></div>
+        </div>
+        <nav class="record-tabs" aria-label="Policy sections">
+            <a href="#overview">Overview</a>
+            <a href="#documents">Documents</a>
+            <a href="#renewals">Renewals</a>
+            <a href="/claims">Claims</a>
+            <a href="#reinsurance">Reinsurance</a>
+            <a href="#audit">Audit</a>
+        </nav>
+        <div class="timeline" aria-label="Policy lifecycle">
+            <div class="timeline-step"><strong>Policy start</strong>{{ record[7] }}</div>
+            <div class="timeline-step"><strong>Current coverage</strong>{{ effective_status }}</div>
+            <div class="timeline-step"><strong>Policy end</strong>{{ record[8] }}</div>
+        </div>
+        <div class="card" id="overview">
             <h2>✏️ Edit Client & Policy</h2>
             {% if error %}
             <p class="form-error">{{ error }}</p>
             {% endif %}
             <form method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="client_id" value="{{ record[0] }}">
 
                 <div class="row">
@@ -200,7 +241,7 @@
 
                 <button type="submit" class="btn-save">💾 Save Changes</button>
             </form>
-            <div class="history">
+            <div class="history" id="renewals">
                 <h3>Renewal history</h3>
                 {% if renewal_history %}
                 <ul>
@@ -212,7 +253,7 @@
                 <p>No renewals recorded yet.</p>
                 {% endif %}
 
-                <h3>Policy documents</h3>
+                <h3 id="documents">Policy documents</h3>
                 {% if documents %}
                 <ul>
                     {% for document in documents %}
@@ -223,12 +264,14 @@
                 <p>No documents attached yet.</p>
                 {% endif %}
                 <form method="POST" action="/policy/{{ record[4] }}/document" enctype="multipart/form-data">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="file" name="document" accept=".pdf,.jpg,.jpeg,.png" required>
                     <button type="submit" class="btn-save">Upload policy document</button>
                 </form>
             </div>
             <a href="/" class="btn-cancel">← Cancel and go back</a>
         </div>
+    </div>
     </div>
 
 </body>

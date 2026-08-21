@@ -1,8 +1,13 @@
 import os
+import re
+import sys
 import sqlite3
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import app
 from services.ai_extraction import extract_policy_from_pdf
@@ -17,6 +22,12 @@ class PolicyIntegrityTests(unittest.TestCase):
         app.DB_PATH = os.path.join(self.temp_dir.name, "test.db")
         app.UPLOAD_FOLDER = os.path.join(self.temp_dir.name, "documents")
         app.init_db()
+
+    def csrf_token(self, client):
+        page = client.get("/login")
+        match = re.search(rb'name="csrf_token" value="([^"]+)"', page.data)
+        self.assertIsNotNone(match)
+        return match.group(1).decode()
 
     def tearDown(self):
         app.DB_PATH = self.original_db_path
@@ -139,13 +150,14 @@ class PolicyIntegrityTests(unittest.TestCase):
         with app.transaction() as conn:
             conn.execute(
                 "INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
-                ("admin", generate_password_hash("correct-password"), "Admin", "2026-01-01T00:00:00")
+                ("test-admin", generate_password_hash("correct-password"), "Admin", "2026-01-01T00:00:00")
             )
         client = app.app.test_client()
 
         self.assertEqual(client.get("/").status_code, 302)
+        token = self.csrf_token(client)
         response = client.post(
-            "/login", data={"username": "admin", "password": "correct-password"}
+            "/login", data={"username": "test-admin", "password": "correct-password", "csrf_token": token}
         )
         self.assertEqual(response.status_code, 302)
         self.assertEqual(client.get("/").status_code, 200)
@@ -156,8 +168,9 @@ class PolicyIntegrityTests(unittest.TestCase):
                 "INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
                 ("viewer", generate_password_hash("correct-password"), "Viewer", "2026-01-01T00:00:00")
             )
-        response = app.app.test_client().post(
-            "/login", data={"username": "viewer", "password": "wrong-password"}
+        client = app.app.test_client()
+        response = client.post(
+            "/login", data={"username": "viewer", "password": "wrong-password", "csrf_token": self.csrf_token(client)}
         )
         self.assertEqual(response.status_code, 401)
 
@@ -168,12 +181,128 @@ class PolicyIntegrityTests(unittest.TestCase):
                 ("mutation-admin", generate_password_hash("correct-password"), "Admin", "2026-01-01T00:00:00")
             )
         client = app.app.test_client()
-        client.post("/login", data={"username": "mutation-admin", "password": "correct-password"})
-        self.assertEqual(client.post("/mark-expired/999999").status_code, 404)
+        client.post("/login", data={"username": "mutation-admin", "password": "correct-password", "csrf_token": self.csrf_token(client)})
+        token = self.csrf_token(client)
+        self.assertEqual(client.post("/mark-expired/999999", data={"csrf_token": token}).status_code, 404)
         self.assertEqual(
-            client.post("/policy/999999/document", data={}, content_type="multipart/form-data").status_code,
+            client.post("/policy/999999/document", data={"csrf_token": token}, content_type="multipart/form-data").status_code,
             404,
         )
+
+    def test_state_changing_request_requires_csrf_token(self):
+        client = app.app.test_client()
+        self.assertEqual(
+            client.post("/login", data={"username": "unknown", "password": "unknown"}).status_code,
+            400,
+        )
+
+    def test_viewer_cannot_delete_or_edit_policy(self):
+        with app.transaction() as conn:
+            conn.execute(
+                "INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
+                ("viewer-role", generate_password_hash("viewer-password"), "Viewer", "2026-01-01T00:00:00")
+            )
+        policy_id = app.add_client_and_policy(
+            "Viewer Client", "555-0200", "viewer@example.com", "VIEW-001", "Motor",
+            "2026-01-01", "2026-12-31", "Active", "Shelf V-1"
+        )
+        client = app.app.test_client()
+        client.post("/login", data={"username": "viewer-role", "password": "viewer-password", "csrf_token": self.csrf_token(client)})
+        token = self.csrf_token(client)
+        self.assertEqual(client.get(f"/edit/{policy_id}").status_code, 403)
+        self.assertEqual(client.post(f"/delete/{policy_id}", data={"csrf_token": token}).status_code, 403)
+
+    def test_invalid_file_signature_is_rejected(self):
+        self.assertFalse(app.valid_file_signature(b"not a pdf", "document.pdf"))
+        self.assertFalse(app.valid_file_signature(b"MZ executable", "document.pdf"))
+        self.assertTrue(app.valid_file_signature(b"%PDF-1.7", "document.pdf"))
+
+    def test_logout_clears_authenticated_session(self):
+        with app.transaction() as conn:
+            conn.execute(
+                "INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
+                ("logout-admin", generate_password_hash("logout-password"), "Admin", "2026-01-01T00:00:00")
+            )
+        client = app.app.test_client()
+        client.post("/login", data={"username": "logout-admin", "password": "logout-password", "csrf_token": self.csrf_token(client)})
+        token = self.csrf_token(client)
+        self.assertEqual(client.post("/logout", data={"csrf_token": token}).status_code, 302)
+        self.assertEqual(client.get("/").status_code, 302)
+
+    def test_claim_creation_and_status_transition(self):
+        policy_id = app.add_client_and_policy(
+            "Claims Client", "555-0300", "claims@example.com", "CLM-POL-001", "Motor",
+            "2026-01-01", "2026-12-31", "Active", "Shelf C-1"
+        )
+        claim_id = app.create_claim(
+            "CLM-001", policy_id, "2026-08-21", "Collision", "1200", "", "Adjuster A",
+            "Reported", "", "Initial report"
+        )
+        self.assertEqual(len(app.get_claims()), 1)
+        self.assertTrue(app.update_claim_status(claim_id, "Under Investigation"))
+        self.assertEqual(app.get_claims()[0][7], "Under Investigation")
+
+    def test_claim_route_requires_claims_role(self):
+        with app.transaction() as conn:
+            conn.execute(
+                "INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
+                ("claims-viewer", generate_password_hash("claims-password"), "Viewer", "2026-01-01T00:00:00")
+            )
+        client = app.app.test_client()
+        client.post("/login", data={"username": "claims-viewer", "password": "claims-password", "csrf_token": self.csrf_token(client)})
+        self.assertEqual(client.get("/claims").status_code, 403)
+
+    def test_policy_risk_score_explains_missing_data(self):
+        policy_id = app.add_client_and_policy(
+            "Risk Client", "555-0400", "", "RISK-001", "Motor",
+            "2026-01-01", "2026-08-25", "Active", "Shelf R-1"
+        )
+        result = app.get_policy_risk_score(policy_id)
+        self.assertIsNotNone(result)
+        self.assertIn("Client email is missing", result["reasons"])
+        self.assertIn("No policy document is attached", result["reasons"])
+        self.assertGreater(result["score"], 0)
+
+    def test_risk_score_route_requires_login(self):
+        self.assertEqual(app.app.test_client().get("/risk-score/999999").status_code, 302)
+
+    def test_portfolio_risk_page_requires_login(self):
+        policy_id = app.add_client_and_policy(
+            "Portfolio Risk Client", "555-0500", "", "RISK-PORT-001", "Motor",
+            "2026-01-01", "2026-08-25", "Active", "Shelf P-1"
+        )
+        scores = app.get_portfolio_risk()
+        self.assertTrue(any(item["policy_id"] == policy_id for item in scores))
+        self.assertEqual(app.app.test_client().get("/risk-intelligence").status_code, 302)
+
+    def test_analytics_route_requires_login(self):
+        self.assertEqual(app.app.test_client().get("/analytics").status_code, 302)
+        analytics = app.get_dashboard_analytics()
+        self.assertIn("policy_types", analytics)
+        self.assertIn("statuses", analytics)
+
+    def test_global_search_requires_login_and_handles_short_queries(self):
+        client = app.app.test_client()
+        self.assertEqual(client.get("/global-search?q=policy").status_code, 302)
+        with client.session_transaction() as sess:
+            sess["user_id"] = 1
+            sess["role"] = "Admin"
+        response = client.get("/global-search?q=x")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {"results": []})
+
+    def test_file_checkout_and_return_history(self):
+        policy_id = app.add_client_and_policy(
+            "File Client", "555-0600", "file@example.com", "FILE-001", "Motor",
+            "2026-01-01", "2026-12-31", "Active", "Shelf F-1"
+        )
+        app.checkout_file(policy_id, "Desk 3", "Operations User")
+        with self.assertRaisesRegex(ValueError, "already checked out"):
+            app.checkout_file(policy_id, "Desk 4", "Operations User")
+        movement = app.get_file_movements(policy_id)[0]
+        self.assertIsNone(movement[6])
+        self.assertTrue(app.return_file(movement[0]))
+        self.assertIsNotNone(app.get_file_movements(policy_id)[0][6])
 
     def test_pdf_extraction_rejects_empty_pdf_text(self):
         data, error = extract_policy_from_pdf(b"not a valid pdf")
