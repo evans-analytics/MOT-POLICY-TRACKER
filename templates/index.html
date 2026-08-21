@@ -161,6 +161,15 @@
             font-weight: bold;
         }
         .extract-status { margin-top: 12px; font-size: 13px; color: #555; text-align: center; min-height: 20px; }
+        .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 25px; }
+        .stat { background: white; border-top: 4px solid #003366; border-radius: 6px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        .stat strong { display: block; color: #003366; font-size: 24px; margin-bottom: 4px; }
+        .stat span { color: #666; font-size: 12px; }
+        .filter-bar { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr auto; gap: 10px; align-items: start; }
+        .filter-bar input, .filter-bar select { margin-bottom: 0; }
+        .btn-secondary { background-color: #6c757d; color: white; text-decoration: none; display: inline-block; }
+        .toolbar { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+        @media (max-width: 700px) { .stats { grid-template-columns: repeat(2, 1fr); } .filter-bar { grid-template-columns: 1fr; } .row { grid-template-columns: 1fr; } }
 
         footer { text-align: center; padding: 20px; color: #888; font-size: 13px; }
     </style>
@@ -170,6 +179,13 @@
 <div class="navbar">🗂 INSURANCE POLICY TRACKER</div>
 
 <div class="container">
+
+    <div class="stats">
+        <div class="stat"><strong>{{ stats.total }}</strong><span>Total policies</span></div>
+        <div class="stat"><strong>{{ stats.active }}</strong><span>Active policies</span></div>
+        <div class="stat"><strong>{{ stats.expiring_soon }}</strong><span>Expiring within 30 days</span></div>
+        <div class="stat"><strong>{{ stats.expired }}</strong><span>Expired policies</span></div>
+    </div>
 
     {% if message %}
     <div class="message">{{ message }}</div>
@@ -223,12 +239,28 @@
     <!-- ── Search ── -->
     <div class="card">
         <h2>🔍 Search for a File</h2>
-        <form method="POST">
-            <div class="search-bar">
-                <input type="text" name="search_query" placeholder="Enter client name..." value="{{ search_query }}">
-                <button type="submit" name="search" class="btn-search">Search</button>
+        <form method="GET">
+            <div class="filter-bar">
+                <input type="text" name="search_query" placeholder="Name, phone, or policy number..." value="{{ search_query }}">
+                <select name="status">
+                    <option value="">All statuses</option>
+                    <option value="Active" {% if status_filter == 'Active' %}selected{% endif %}>Active</option>
+                    <option value="Expired" {% if status_filter == 'Expired' %}selected{% endif %}>Expired</option>
+                </select>
+                <input type="text" name="policy_type" placeholder="Policy type" value="{{ policy_type_filter }}">
+                <select name="expiry_window">
+                    <option value="">Any expiry date</option>
+                    <option value="7" {% if expiry_window == '7' %}selected{% endif %}>Next 7 days</option>
+                    <option value="30" {% if expiry_window == '30' %}selected{% endif %}>Next 30 days</option>
+                    <option value="60" {% if expiry_window == '60' %}selected{% endif %}>Next 60 days</option>
+                </select>
+                <button type="submit" class="btn-search">Filter</button>
             </div>
         </form>
+        <div class="toolbar">
+            <a class="btn-secondary" href="/export.csv">Export CSV</a>
+            <a class="btn-secondary" href="/backup">Download backup</a>
+        </div>
         {% if results %}
         <table>
             <thead>

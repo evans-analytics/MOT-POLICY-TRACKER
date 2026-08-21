@@ -91,6 +91,11 @@
         .btn-cancel:hover {
             color: #333;
         }
+
+        .history { margin-top: 22px; padding-top: 18px; border-top: 1px solid #ddd; }
+        .history h3 { color: #003366; font-size: 15px; margin-bottom: 10px; }
+        .history p, .history li { color: #666; font-size: 13px; margin-bottom: 6px; }
+        .history ul { padding-left: 18px; }
     </style>
 </head>
 <body>
@@ -155,6 +160,33 @@
 
                 <button type="submit" class="btn-save">💾 Save Changes</button>
             </form>
+            <div class="history">
+                <h3>Renewal history</h3>
+                {% if renewal_history %}
+                <ul>
+                    {% for renewal in renewal_history %}
+                    <li>{{ renewal[0] }} to {{ renewal[1] }} renewed to {{ renewal[2] }} to {{ renewal[3] }} on {{ renewal[4] }}</li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p>No renewals recorded yet.</p>
+                {% endif %}
+
+                <h3>Policy documents</h3>
+                {% if documents %}
+                <ul>
+                    {% for document in documents %}
+                    <li><a href="/policy-document/{{ document[0] }}">{{ document[1] }}</a> uploaded {{ document[2] }}</li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p>No documents attached yet.</p>
+                {% endif %}
+                <form method="POST" action="/policy/{{ record[4] }}/document" enctype="multipart/form-data">
+                    <input type="file" name="document" accept=".pdf,.jpg,.jpeg,.png" required>
+                    <button type="submit" class="btn-save">Upload policy document</button>
+                </form>
+            </div>
             <a href="/" class="btn-cancel">← Cancel and go back</a>
         </div>
     </div>
