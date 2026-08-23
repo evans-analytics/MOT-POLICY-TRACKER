@@ -1261,7 +1261,4 @@ if __name__ == "__main__":
     debug_mode = os.getenv("FLASK_DEBUG", "0").lower() in {"1", "true", "yes"}
     port = int(os.getenv("FLASK_PORT", "5000"))
     app.run(debug=debug_mode, port=port)
-    
-   ##this is not part of the code and im just testing stuff out"
-   #this is not part and im just playiong around with it 
-   #hi and im just working on the branch code and nothing too serious  
+ 
